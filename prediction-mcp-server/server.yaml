@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "prediction": {
+      "command": "/Users/jaidevshah/prediction-data/prediction-mcp-server/.venv/bin/python",
+      "args": [
+        "-m",
+        "prediction_mcp_server.cli",
+        "serve"
+      ],
+      "env": {
+        "PREDICTION_CONFIG_FILE": "/Users/jaidevshah/prediction-data/prediction-mcp-server/.env"
+      },
+      "cwd": "/Users/jaidevshah/prediction-data/prediction-mcp-server"
+    }
+  }
+}

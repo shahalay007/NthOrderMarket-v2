@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NthOrder</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #050505;
+            color: #111;
+            margin: 0;
+            min-height: 100vh;
+        }
+
+        .chat-container {
+            width: 100%;
+            min-height: 100vh;
+            background: #f9f9f9;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chat-header {
+            background: #050505;
+            color: #f9f9f9;
+            padding: 32px 48px 24px;
+            display: flex;
+            align-items: center;
+            gap: 18px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .chat-header-text {
+            flex: 1;
+        }
+
+        .chat-header-title {
+            font-size: 26px;
+            letter-spacing: 0.02em;
+            font-weight: 700;
+        }
+
+        .logs-button {
+            padding: 10px 22px;
+            background: transparent;
+            color: #f9f9f9;
+            border: 1px solid rgba(255, 255, 255, 0.35);
+            border-radius: 999px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s ease, color 0.2s ease, border 0.2s ease;
+        }
+
+        .logs-button:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 40px 48px 32px;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            background: #ffffff;
+        }
+
+        .chat-messages::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .chat-messages::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .chat-messages::-webkit-scrollbar-thumb {
+            background: #bdbdbd;
+            border-radius: 4px;
+        }
+
+        .chat-messages::-webkit-scrollbar-thumb:hover {
+            background: #9d9d9d;
+        }
+
+        .message {
+            max-width: 780px;
+            padding: 16px 20px;
+            border-radius: 18px;
+            word-wrap: break-word;
+            animation: slideIn 0.25s ease-out;
+            line-height: 1.55;
+            font-size: 15px;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(15px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            align-self: flex-end;
+            background: #111111;
+            color: #f5f5f5;
+            border-top-right-radius: 6px;
+        }
+
+        .message.bot {
+            background: #f4f4f4;
+            color: #111111;
+            border-top-left-radius: 6px;
+        }
+
+        .message.bot strong {
+            color: #000;
+        }
+
+        .message.bot a {
+            color: #111111;
+            font-weight: 600;
+            text-decoration: underline;
+        }
+
+        .message.error {
+            background: #fff4f4;
+            color: #8b1b1b;
+            align-self: center;
+            text-align: left;
+            border: 1px solid rgba(139, 27, 27, 0.25);
+        }
+
+        .typing-indicator {
+            display: none;
+            align-self: flex-start;
+            padding: 14px 18px;
+            background: #111111;
+            color: #f5f5f5;
+            border-radius: 999px;
+            box-shadow: 0 10px 22px rgba(0, 0, 0, 0.12);
+        }
+
+        .typing-indicator.active {
+            display: block;
+        }
+
+        .typing-indicator span {
+            display: inline-block;
+            width: 9px;
+            height: 9px;
+            background: #f5f5f5;
+            border-radius: 50%;
+            margin: 0 3px;
+            animation: typing 1.4s infinite;
+        }
+
+        .typing-indicator span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-indicator span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes typing {
+            0%, 60%, 100% {
+                transform: translateY(0);
+                opacity: 0.55;
+            }
+            30% {
+                transform: translateY(-12px);
+                opacity: 1;
+            }
+        }
+
+        .welcome-message {
+            background: #f4f4f4;
+            padding: 32px 36px;
+            border-radius: 16px;
+            color: #222222;
+            max-width: 760px;
+            line-height: 1.65;
+            box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.04);
+        }
+
+        .welcome-message-title {
+            font-size: 30px;
+            font-weight: 700;
+            color: #111111;
+            margin-bottom: 12px;
+            letter-spacing: -0.01em;
+        }
+
+        .chat-input-container {
+            padding: 24px 48px 32px;
+            background: #f9f9f9;
+            border-top: 1px solid #e4e4e4;
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .chat-input {
+            flex: 1;
+            min-width: 220px;
+            padding: 14px 18px;
+            border: 1px solid #c8c8c8;
+            border-radius: 12px;
+            font-size: 15px;
+            outline: none;
+            background: #ffffff;
+            transition: border 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .chat-input:focus {
+            border-color: #111111;
+            box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.08);
+        }
+
+        .send-button {
+            padding: 0 28px;
+            background: #111111;
+            color: #f5f5f5;
+            border: none;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+        }
+
+        .send-button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 10px 16px rgba(0, 0, 0, 0.18);
+        }
+
+        .send-button:active {
+            transform: translateY(0);
+            box-shadow: none;
+        }
+
+        .send-button:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        .filter-controls {
+            margin-top: 18px;
+            padding: 16px 18px;
+            background: #f4f4f4;
+            border-radius: 12px;
+            border: 1px solid #e0e0e0;
+        }
+
+        .filter-controls .control-row {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .filter-controls input,
+        .filter-controls select {
+            padding: 8px 12px;
+            border-radius: 10px;
+            border: 1px solid #cfcfcf;
+            font-size: 13px;
+            background: #ffffff;
+            flex: 1 1 160px;
+        }
+
+        .filter-controls button {
+            padding: 8px 16px;
+            border-radius: 10px;
+            border: none;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 13px;
+            transition: opacity 0.15s ease, transform 0.15s ease;
+        }
+
+        #applyFilterBtn {
+            background: #111111;
+            color: #f9f9f9;
+        }
+
+        #clearFilterBtn {
+            background: #d5d5d5;
+            color: #111111;
+        }
+
+        .filter-controls button:hover {
+            opacity: 0.88;
+        }
+
+        .filter-controls button:active {
+            transform: scale(0.98);
+        }
+
+        #filterStats {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #555555;
+        }
+
+        .message.table-message {
+            max-width: 100%;
+            width: 100%;
+            padding: 0;
+            background: transparent;
+            box-shadow: none;
+        }
+
+        .results-module {
+            background: #f7f7f7;
+            border: 1px solid #e2e2e2;
+            border-radius: 16px;
+            padding: 20px 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .results-summary {
+            font-size: 15px;
+            line-height: 1.5;
+            color: #111111;
+            font-weight: 500;
+        }
+
+        .results-table-scroll {
+            overflow-x: auto;
+        }
+
+        .results-table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 600px;
+            font-size: 13px;
+        }
+
+        .results-table thead th {
+            text-align: left;
+            padding: 10px 12px;
+            background: #111111;
+            color: #f5f5f5;
+            font-weight: 600;
+            letter-spacing: 0.01em;
+            position: sticky;
+            top: 0;
+        }
+
+        .results-table tbody td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #e5e5e5;
+            vertical-align: top;
+        }
+
+        .results-table tbody tr:hover {
+            background: #f0f0f0;
+        }
+
+        .results-table tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        .market-name {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .table-link a {
+            color: #111111;
+            text-decoration: underline;
+            font-weight: 600;
+        }
+
+        .reasoning-cell {
+            max-width: 280px;
+            white-space: pre-wrap;
+            line-height: 1.45;
+        }
+
+        .results-table small {
+            color: #555555;
+            display: block;
+            margin-top: 2px;
+        }
+
+        @media (max-width: 768px) {
+            .chat-header {
+                padding: 24px 20px 18px;
+            }
+
+            .chat-messages {
+                padding: 28px 20px;
+            }
+
+            .chat-input-container {
+                padding: 20px;
+                flex-direction: column;
+            }
+
+            .send-button {
+                width: 100%;
+                padding: 14px;
+            }
+
+            .message {
+                max-width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <div class="chat-header-text">
+                <div class="chat-header-title">NthOrder</div>
+            </div>
+            <button class="logs-button" onclick="window.open('/logs', '_blank')">View Logs</button>
+        </div>
+        <div class="chat-messages" id="chatMessages">
+            <div class="welcome-message">
+                <div class="welcome-message-title">Welcome!</div>
+                Ask me about any Polymarket event, market probability, trading volume, or prediction analysis.
+            </div>
+        </div>
+        <div class="typing-indicator" id="typingIndicator">
+            <span></span>
+            <span></span>
+            <span></span>
+        </div>
+        <div class="chat-input-container">
+            <input
+                type="text"
+                class="chat-input"
+                id="messageInput"
+                placeholder="Ask about any prediction market..."
+                autocomplete="off"
+            >
+            <button class="send-button" id="sendButton">Send</button>
+        </div>
+    </div>
+
+    <script>
+        const chatMessages = document.getElementById('chatMessages');
+        const messageInput = document.getElementById('messageInput');
+        const sendButton = document.getElementById('sendButton');
+        const typingIndicator = document.getElementById('typingIndicator');
+
+        const currencyFormatter = new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'USD',
+            maximumFractionDigits: 2
+        });
+
+        const numberFormatter = new Intl.NumberFormat('en-US', {
+            maximumFractionDigits: 2
+        });
+
+        let currentEvents = [];
+        let currentSummary = '';
+        let currentRenderedEvents = [];
+        let filterHandlersAttached = false;
+
+        function escapeHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function formatBotMessage(text) {
+            if (!text) return '';
+            let formatted = text;
+            formatted = formatted.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+            formatted = formatted.replace(/\(Relevance: (\d+)\/100 - ([^)]+)\)/g, '<span style="color: #111111; font-weight: 600; font-size: 13px;">(Score: $1/100 - $2)</span>');
+            formatted = formatted.replace(/\(Relevance: (\d+)\/100\)/g, '<span style="color: #111111; font-weight: 600; font-size: 13px;">(Score: $1/100)</span>');
+            formatted = formatted.replace(/🔗 Link: (https?:\/\/[^\s]+)/g, '<a href="$1" target="_blank" style="color: #111111; text-decoration: underline; font-weight: 500;">🔗 View Market</a>');
+            formatted = formatted.replace(/\n/g, '<br>');
+            return formatted.trim();
+        }
+
+        function addMessage(text, type) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            if (type === 'bot') {
+                messageDiv.innerHTML = formatBotMessage(text);
+            } else {
+                messageDiv.textContent = text;
+            }
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function showTypingIndicator() {
+            typingIndicator.classList.add('active');
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function hideTypingIndicator() {
+            typingIndicator.classList.remove('active');
+        }
+
+        function extractSummary(responseText, fallbackCount) {
+            if (!responseText) {
+                return fallbackCount ? `Found ${fallbackCount} market${fallbackCount === 1 ? '' : 's'}.` : 'Results ready.';
+            }
+            const firstLine = responseText.split('\n').find(line => line.trim());
+            return firstLine || `Found ${fallbackCount} market${fallbackCount === 1 ? '' : 's'}.`;
+        }
+
+        const COLUMN_CONFIG = {
+            index: { label: '#', formatter: (_, __, idx) => idx + 1 },
+            title: { label: 'Market', always: true, formatter: value => `<div class="market-name">${escapeHtml(value || 'Untitled market')}</div>` },
+            liquidity: { label: 'Liquidity', formatter: value => value || value === 0 ? currencyFormatter.format(Number(value)) : '—' },
+            volume: { label: 'Volume', formatter: value => value || value === 0 ? currencyFormatter.format(Number(value)) : '—' },
+            prices: { label: 'Prices', formatter: value => Array.isArray(value) ? value.map(v => escapeHtml(v)).join('<br>') : (value ? escapeHtml(value) : '—') },
+            url: { label: 'Link', formatter: value => value ? `<span class="table-link"><a href="${escapeHtml(value)}" target="_blank">Open</a></span>` : '—' },
+            relevance: { label: 'Score', formatter: value => (value || value === 0) ? `${numberFormatter.format(Number(value))}/100` : '—' },
+            reasoning: { label: 'Reasoning', formatter: value => value ? `<div class="reasoning-cell">${formatBotMessage(value)}</div>` : '—' }
+        };
+
+        const HIDDEN_KEYS = new Set(['id', 'slug', 'market_id', 'event_id', 'type']);
+
+        function resolveValue(event, key) {
+            switch (key) {
+                case 'title':
+                    return event.title || event.name || event.market;
+                case 'liquidity':
+                    return event.liquidity;
+                case 'volume':
+                    return event.volume;
+                case 'prices':
+                    return event.prices || event.outcome_prices || event.outcomePrices;
+                case 'url':
+                    if (event.url) return event.url;
+                    if (event.slug) return `https://polymarket.com/event/${event.slug}`;
+                    if (event.id) return `https://polymarket.com/event/${event.id}`;
+                    return null;
+                case 'relevance':
+                    return event.relevance ?? event.score ?? event.rank;
+                case 'reasoning':
+                    return event.reasoning || event.justification || event.notes;
+                default:
+                    return event[key];
+            }
+        }
+
+        function toTitleCase(str) {
+            return str
+                .replace(/_/g, ' ')
+                .replace(/([a-z])([A-Z])/g, '$1 $2')
+                .replace(/\s+/g, ' ')
+                .trim()
+                .replace(/\b\w/g, c => c.toUpperCase());
+        }
+
+        function collectColumns(events) {
+            const columns = [{ key: 'index', label: COLUMN_CONFIG.index.label }];
+            const added = new Set(['index']);
+
+            Object.entries(COLUMN_CONFIG).forEach(([key, config]) => {
+                if (key === 'index') return;
+                const hasValue = events.some(evt => {
+                    const value = resolveValue(evt, key);
+                    return value !== undefined && value !== null && `${value}`.trim() !== '';
+                });
+                if (config.always || hasValue) {
+                    columns.push({ key, label: config.label });
+                    added.add(key);
+                }
+            });
+
+            events.forEach(evt => {
+                Object.keys(evt).forEach(key => {
+                    if (added.has(key) || HIDDEN_KEYS.has(key)) return;
+                    const value = resolveValue(evt, key);
+                    if (value === undefined || value === null || `${value}`.trim() === '') return;
+                    columns.push({ key, label: toTitleCase(key) });
+                    added.add(key);
+                });
+            });
+
+            return columns;
+        }
+
+        function formatCellValue(columnKey, value, index) {
+            if (COLUMN_CONFIG[columnKey]?.formatter) {
+                return COLUMN_CONFIG[columnKey].formatter(value, columnKey, index);
+            }
+            if (Array.isArray(value)) {
+                return value.map(v => escapeHtml(v)).join('<br>');
+            }
+            if (typeof value === 'number') {
+                return numberFormatter.format(value);
+            }
+            if (value === undefined || value === null || `${value}`.trim() === '') {
+                return '—';
+            }
+            return escapeHtml(value);
+        }
+
+        function ensureTableWrapper() {
+            let wrapper = document.getElementById('eventsTableMessage');
+            if (!wrapper) {
+                wrapper = document.createElement('div');
+                wrapper.id = 'eventsTableMessage';
+                wrapper.className = 'message bot table-message';
+                wrapper.innerHTML = `
+                    <div class="results-module">
+                        <div class="results-summary" id="resultsSummary"></div>
+                        <div class="filter-controls">
+                            <div class="control-row">
+                                <input type="text" id="searchBox" placeholder="Search events…">
+                                <select id="sortBy">
+                                    <option value="relevance">Sort: Relevance</option>
+                                    <option value="volume">Sort: Volume</option>
+                                    <option value="liquidity">Sort: Liquidity</option>
+                                </select>
+                                <input type="number" id="minVolume" placeholder="Min Volume">
+                                <input type="number" id="minRelevance" placeholder="Min Score">
+                                <button id="applyFilterBtn">Apply</button>
+                                <button id="clearFilterBtn">Clear</button>
+                            </div>
+                            <div id="filterStats"></div>
+                        </div>
+                        <div class="results-table-scroll">
+                            <table class="results-table">
+                                <thead id="resultsTableHead"></thead>
+                                <tbody id="resultsTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                `;
+                chatMessages.appendChild(wrapper);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+
+            if (!filterHandlersAttached) {
+                const applyBtn = document.getElementById('applyFilterBtn');
+                const clearBtn = document.getElementById('clearFilterBtn');
+                if (applyBtn && clearBtn) {
+                    applyBtn.addEventListener('click', applyFilters);
+                    clearBtn.addEventListener('click', clearFilters);
+                    filterHandlersAttached = true;
+                }
+            }
+
+            return wrapper;
+        }
+
+        function renderEventsTable(events, summaryText) {
+            if (!events || events.length === 0) {
+                addMessage(summaryText || 'No markets found.', 'bot');
+                return;
+            }
+
+            ensureTableWrapper();
+            currentRenderedEvents = events;
+
+            const summaryEl = document.getElementById('resultsSummary');
+            if (summaryEl) {
+                summaryEl.innerHTML = formatBotMessage(summaryText || `Currently showing ${events.length} markets.`);
+            }
+
+            const columns = collectColumns(events);
+
+            const headEl = document.getElementById('resultsTableHead');
+            if (headEl) {
+                headEl.innerHTML = `<tr>${columns.map(col => `<th>${escapeHtml(col.label)}</th>`).join('')}</tr>`;
+            }
+
+            const bodyEl = document.getElementById('resultsTableBody');
+            if (bodyEl) {
+                bodyEl.innerHTML = events.map((event, index) => {
+                    const rowCells = columns.map(col => {
+                        const value = col.key === 'index' ? null : resolveValue(event, col.key);
+                        const cellValue = col.key === 'index'
+                            ? formatCellValue('index', null, index)
+                            : formatCellValue(col.key, value, index);
+                        return `<td>${cellValue}</td>`;
+                    }).join('');
+                    return `<tr>${rowCells}</tr>`;
+                }).join('');
+            }
+
+            updateFilterStats(events.length, currentEvents.length || events.length);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message) return;
+
+            addMessage(message, 'user');
+            messageInput.value = '';
+            sendButton.disabled = true;
+            showTypingIndicator();
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message })
+                });
+
+                const data = await response.json();
+                hideTypingIndicator();
+
+                if (data.success) {
+                    const fallbackCount = data.events?.length || 0;
+                    const summary = data.summary || extractSummary(data.response, fallbackCount);
+
+                    if (data.events && data.events.length > 0) {
+                        currentEvents = data.events;
+                        currentSummary = summary;
+                        renderEventsTable(currentEvents, currentSummary);
+                    } else {
+                        addMessage(data.response || 'No markets found for that query.', 'bot');
+                    }
+                } else {
+                    addMessage(`Error: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                hideTypingIndicator();
+                addMessage(`Error: ${error.message}`, 'error');
+            } finally {
+                sendButton.disabled = false;
+                messageInput.focus();
+            }
+        }
+
+        function updateFilterStats(showing, total) {
+            const statsEl = document.getElementById('filterStats');
+            if (statsEl) {
+                statsEl.textContent = `Showing ${showing} of ${total} markets`;
+            }
+        }
+
+        async function applyFilters() {
+            if (!currentEvents.length) return;
+
+            const search = document.getElementById('searchBox')?.value || '';
+            const sortBy = document.getElementById('sortBy')?.value || 'relevance';
+            const minVolume = document.getElementById('minVolume')?.value || '';
+            const minRelevance = document.getElementById('minRelevance')?.value || '';
+
+            const filters = {
+                search,
+                sort_by: sortBy,
+                sort_order: 'desc'
+            };
+
+            if (minVolume) filters.min_volume = parseFloat(minVolume);
+            if (minRelevance) filters.min_relevance = parseInt(minRelevance, 10);
+
+            try {
+                const response = await fetch('/api/filter-events', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ events: currentEvents, filters })
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    const summary = `${extractSummary(currentSummary, currentEvents.length)} · Filtered view`;
+                    displayFilteredEvents(data.filtered_events, summary, data.count);
+                }
+            } catch (error) {
+                addMessage(`Filter error: ${error.message}`, 'error');
+            }
+        }
+
+        function displayFilteredEvents(events, summaryOverride, filteredCount) {
+            renderEventsTable(events, summaryOverride || currentSummary);
+            updateFilterStats(filteredCount ?? events.length, currentEvents.length);
+        }
+
+        function clearFilters() {
+            const searchBox = document.getElementById('searchBox');
+            const sortBy = document.getElementById('sortBy');
+            const minVolume = document.getElementById('minVolume');
+            const minRelevance = document.getElementById('minRelevance');
+
+            if (searchBox) searchBox.value = '';
+            if (sortBy) sortBy.value = 'relevance';
+            if (minVolume) minVolume.value = '';
+            if (minRelevance) minRelevance.value = '';
+
+            renderEventsTable(currentEvents, currentSummary);
+            updateFilterStats(currentEvents.length, currentEvents.length);
+        }
+
+        sendButton.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        messageInput.focus();
+    </script>
+</body>
+</html>
