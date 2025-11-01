@@ -67,6 +67,7 @@ class IntelligentGeminiBot:
         self._cached_domain_filter = None
         self._cached_required_columns = None
         self._last_thinking_trace = None
+        self._platform_filter = 'BOTH'
 
     def _log(self, level, message):
         """Log a message via callback if available."""
@@ -120,6 +121,10 @@ class IntelligentGeminiBot:
         if len(lines) > max_lines:
             preview.append("...")
         return "\n".join(preview)
+
+    def get_platform_filter(self):
+        """Return the platform preference from the latest analysis."""
+        return getattr(self, '_platform_filter', 'BOTH')
 
     @staticmethod
     def _detect_metric_field(user_query):
@@ -541,6 +546,33 @@ IMPORTANT: These are the ONLY columns available in the database. DO NOT use any 
 
 CRITICAL: Do NOT include price-related columns like 'outcome_prices', 'last_trade_price', 'best_bid', 'best_ask', or any other columns not listed above. They are excluded from queries.
 
+KALSHI DATASET OVERVIEW:
+Table: kalshi_markets
+- ticker (TEXT, PRIMARY KEY)
+- event_ticker (TEXT)
+- title (TEXT)
+- subtitle (TEXT)
+- market_type (TEXT)
+- category (TEXT)
+- status (TEXT)
+- open_time (DATETIME)
+- close_time (DATETIME)
+- expiration_time (DATETIME)
+- settlement_time (DATETIME)
+- volume (INTEGER)
+- liquidity (INTEGER)
+- open_interest (INTEGER)
+- yes_bid (INTEGER)
+- yes_ask (INTEGER)
+- no_bid (INTEGER)
+- no_ask (INTEGER)
+- last_price (INTEGER)
+- result (TEXT)
+- is_active (BOOLEAN)
+- created_at (DATETIME)
+- updated_at (DATETIME)
+- last_synced (DATETIME)
+
 Common query patterns:
 - Top volume: SELECT id, title, slug, domain, section, subsection, volume, liquidity FROM events WHERE is_active=1 ORDER BY volume DESC
 - Recent: SELECT id, title, slug, domain, section, subsection, volume, liquidity FROM events WHERE is_active=1 ORDER BY updated_at DESC
@@ -615,6 +647,8 @@ Provide the following in your response:
    - Always include 'volume' and 'liquidity' for financial metrics
    - Do NOT include any price-related columns (outcome_prices, last_trade_price, best_bid, best_ask)
 
+7. PLATFORM_FILTER (specify whether the answer should include Polymarket, Kalshi, or BOTH. If user does not specify, default to BOTH.)
+
 Response format:
 INTENT: <intent description>
 FILTERS: <filters or NONE>
@@ -630,6 +664,8 @@ BATCH_REASON: <if BATCH, provide reason here>
 COMPARISON_QUERIES: <if COMPARISON, provide category names and SQL queries in format: CATEGORY1:query1|CATEGORY2:query2>
 
 DOMAIN_FILTER: <comma-separated domain numbers (1-11) or ALL>
+
+PLATFORM_FILTER: <POLYMARKET | KALSHI | BOTH>
 
 REQUIRED_COLUMNS: <comma-separated, minimal set>
 
@@ -647,6 +683,7 @@ Your response:"""
             required_columns = ['id', 'title', 'slug', 'domain', 'section', 'subsection', 'volume', 'liquidity']
             domain_filter = None
             user_limit = None
+            platform_filter = 'BOTH'
 
             for line in result.split('\n'):
                 line = line.strip()
@@ -677,6 +714,12 @@ Your response:"""
                     if domain_str != 'ALL':
                         # Parse comma-separated domain numbers
                         domain_filter = [int(d.strip()) for d in domain_str.split(',') if d.strip().isdigit()]
+                elif line.startswith('PLATFORM_FILTER:'):
+                    platform_str = line.replace('PLATFORM_FILTER:', '').strip().upper()
+                    if platform_str in {'POLYMARKET', 'KALSHI', 'BOTH'}:
+                        platform_filter = platform_str
+                    else:
+                        platform_filter = 'BOTH'
                 elif line.startswith('REQUIRED_COLUMNS:'):
                     cols_str = line.replace('REQUIRED_COLUMNS:', '').strip()
                     required_columns = [c.strip() for c in cols_str.split(',') if c.strip()]
@@ -691,17 +734,20 @@ Your response:"""
             if 'title' not in required_columns:
                 required_columns.insert(1, 'title')
 
-            return {
+            result_dict = {
                 'intent': intent,
                 'output_format': output_format,
                 'strategy': strategy,
                 'sql_query': sql_query,
                 'batch_reason': batch_reason,
-                'comparison_queries': comparison_queries,
-                'required_columns': required_columns,
-                'domain_filter': domain_filter,
-                'user_limit': user_limit
+            'comparison_queries': comparison_queries,
+            'required_columns': required_columns,
+            'domain_filter': domain_filter,
+                'user_limit': user_limit,
+                'platform_filter': platform_filter
             }
+            self._log("info", f"🎯 Platform filter: {platform_filter}")
+            return result_dict
 
         except Exception as e:
             print(f"Combined analysis error: {e}")
@@ -714,7 +760,8 @@ Your response:"""
                 'comparison_queries': None,
                 'required_columns': ['id', 'title', 'slug', 'domain', 'section', 'subsection', 'volume', 'liquidity'],
                 'domain_filter': None,
-                'user_limit': None
+                'user_limit': None,
+                'platform_filter': 'BOTH'
             }
 
         except Exception as e:
@@ -1523,14 +1570,16 @@ Response:"""
             self._last_thinking_trace = None
 
             # Pre-step: Add system context to query
-            contextualized_query = f"""SYSTEM CONTEXT: You are a Polymarket prediction markets chatbot with access to a database of markets/events.
+            contextualized_query = f"""SYSTEM CONTEXT: You are a prediction markets chatbot with access to Polymarket (events table) and Kalshi (kalshi_markets table).
 
-CRITICAL INSTRUCTION: Unless the user explicitly asks a generic question (e.g., "what is polymarket?", "how do prediction markets work?"), you MUST query the database and return actual markets/events from it.
+CRITICAL INSTRUCTION: Unless the user explicitly asks a generic question (e.g., "what is polymarket?", "how do prediction markets work?"), you MUST query the databases and return actual markets/events from Polymarket and/or Kalshi.
 
 Examples:
-- "interest rates" → Find markets about interest rates in the database
-- "trump" → Find markets about Trump in the database
-- "AI markets" → Find markets about AI in the database
+- "interest rates" → Find markets about interest rates in the databases
+- "trump" → Find markets about Trump in the databases
+- "AI markets" → Find markets about AI in the databases
+- "kalshi political markets" → Prefer Kalshi political markets
+- "polymarket sports" → Prefer Polymarket sports markets
 - "what is polymarket?" → Generic question, can answer without database
 
 USER QUERY: {user_query}"""
@@ -1549,6 +1598,7 @@ USER QUERY: {user_query}"""
             comparison_info = analysis['comparison_queries']
             self._cached_required_columns = analysis['required_columns']
             self._cached_domain_filter = analysis['domain_filter']
+            self._platform_filter = analysis.get('platform_filter', 'BOTH')
             user_limit = analysis['user_limit']
 
             # Override strategy for simple ranking queries to avoid unnecessary reasoning
@@ -1557,6 +1607,11 @@ USER QUERY: {user_query}"""
                 strategy_normalized = 'sql'
                 strategy = 'sql'
                 self._log("info", "🎯 Simple metric query detected → forcing SQL strategy")
+
+            if self._platform_filter == 'KALSHI':
+                self._log("info", "🎯 Platform filter: Kalshi only → skipping Polymarket pipeline")
+                self._record_structured_results([])
+                return "Kalshi markets requested. Fetching Kalshi results."
 
             needs_reasoning = strategy_normalized in {'batch', 'comparison'}
 
@@ -1675,7 +1730,7 @@ USER QUERY: {user_query}"""
 
 def main():
     """Test the intelligent bot."""
-    api_key = os.getenv('GEMINI_API_KEY', 'AIzaSyBeNxxwILHyuPEljDD2pDDfG2ZrOIP4-ng')
+    api_key = os.getenv('GEMINI_API_KEY', 'AIzaSyAX25ZJUVWxsSQWqkvJs2yB2fidcXO8KJE')
     bot = IntelligentGeminiBot(api_key)
     
     print("=" * 70)

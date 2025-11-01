@@ -1049,7 +1049,7 @@ USER QUERY: {user_query}"""
 
 def main():
     """Test the intelligent bot."""
-    api_key = os.getenv('GEMINI_API_KEY', 'AIzaSyBeNxxwILHyuPEljDD2pDDfG2ZrOIP4-ng')
+    api_key = os.getenv('GEMINI_API_KEY', 'AIzaSyAX25ZJUVWxsSQWqkvJs2yB2fidcXO8KJE')
     bot = IntelligentGeminiBot(api_key)
     
     print("=" * 70)

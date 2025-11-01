@@ -1,11 +1,12 @@
 # Prediction MCP Server
 
-Model Context Protocol (MCP) server exposing Polymarket-style prediction market data and Gemini-powered analysis workflows. Inspired by the Alpaca MCP server, this package makes the local `polymarket_read.db` dataset and the `IntelligentGeminiBot` flow available inside MCP-compatible clients such as Claude Desktop, Cursor, and VS Code.
+Model Context Protocol (MCP) server exposing Polymarket-style prediction market data with Gemini- and ChatGPT-powered analysis workflows. Inspired by the Alpaca MCP server, this package makes the local `polymarket_read.db` dataset and the `IntelligentGeminiBot` flow available inside MCP-compatible clients such as Claude Desktop, Cursor, and VS Code.
 
 ## Features
 - 🔍 Search, filter, and inspect active prediction markets from the local SQLite replica.
 - 📊 Retrieve high-volume markets, category breakdowns, and market-level statistics.
-- 🤖 Ask natural language questions that are routed through the existing `IntelligentGeminiBot` decision engine.
+- 🤖 Ask natural language questions routed through the existing `IntelligentGeminiBot` decision engine.
+- 💬 Optionally answer the same questions with OpenAI ChatGPT using the local market context.
 - ⚙️ Simple CLI (`prediction-mcp-server`) for configuration, status checks, and running the server over stdio or HTTP.
 
 ## MCP Tools
@@ -14,6 +15,7 @@ Model Context Protocol (MCP) server exposing Polymarket-style prediction market 
 - `market_details` — deep dive on an individual market by slug or id.
 - `market_stats` — aggregate stats plus top domains by volume.
 - `intelligent_market_analysis` — mirrors the `IntelligentGeminiBot` end-to-end workflow.
+- `chatgpt_market_analysis` — feeds Polymarket context into ChatGPT (requires `OPENAI_API_KEY`).
 
 ## One-Line Installer
 Run the bundled installer to set up a virtualenv, install dependencies, create `.env`, bootstrap the database, and write a ready-to-copy MCP configuration snippet.
@@ -42,6 +44,8 @@ Set these environment variables (or populate them via `init`):
 - `PREDICTION_WRITE_DB_PATH`: writable primary database (defaults to `polymarket.db`).
 - `PREDICTION_READ_DB_PATH`: override for read replica path.
 - `GEMINI_API_KEY`: Google Gemini API key, required for the intelligent chat tool.
+- `OPENAI_API_KEY`: OpenAI key, required to enable the ChatGPT analysis tool.
+- `OPENAI_MODEL`: Optional override for the OpenAI model (defaults to `gpt-4o-mini`).
 - `PREDICTION_DEFAULT_LIMIT`: optional default result limit for SQL tools.
 - `PREDICTION_CONFIG_FILE`: explicit path to the `.env` file (useful for MCP client configs).
 

@@ -1,367 +1,236 @@
-# Intelligent Multi-Platform Prediction Market Chatbot
+# NthOrder Market Intelligence
 
-A sophisticated chatbot application for querying prediction markets from **Polymarket** and **Kalshi** using natural language. Combines SQL queries for structured data retrieval with AI-powered semantic search for complex queries across both platforms.
+An end-to-end toolkit for exploring prediction markets on **Polymarket** and **Kalshi**. The project keeps local SQLite replicas in sync with both exchanges, exposes an intelligent natural-language interface powered by Gemini, and offers an MCP bridge for IDE integrations.
 
-## Features
+The core goals are:
+- maintain fresh, local copies of active markets (volumes, liquidity, metadata)
+- let users ask questions in plain English and get the best matching markets
+- pick the fastest strategy automatically (direct SQL for rankings, Gemini batch scoring for fuzzy searches)
+- support platform-specific or combined answers while always filtering to active markets
 
-- **Multi-Platform Support**: Query both Polymarket (~3,000 markets) and Kalshi (~135,000 markets) simultaneously
-- **Intelligent Query Processing**: Automatically chooses between SQL (fast) and AI semantic search (comprehensive)
-- **Natural Language Interface**: Ask questions in plain English about prediction markets
-- **Real-time Data**: Market data updates every 20 seconds from both APIs
-- **Advanced Filtering**: Filter results by volume, liquidity, relevance, and keywords
-- **Domain Categories**: Markets organized by categories across both platforms
-- **Dual Database Architecture**: Separate write and read databases for optimal performance
-- **Unified Results**: See markets from both platforms ranked by relevance in a single view
+---
 
-## Prerequisites
+## System Overview
 
-- Python 3.8+
-- Gemini API key (free tier supported)
-- SQLite3
-
-## Installation
-
-1. **Clone the repository**
-```bash
-git clone <repository-url>
-cd polymarket-chatbot
+```
+┌──────────────┐   API pull    ┌──────────────┐
+│ update_market│ ─────────────▶│ polymarket.db│  (write replica)
+│ _data.py     │               └──────┬───────┘
+└──────┬───────┘                      │ sync via db_sync.py
+       │                              ▼
+       │                     ┌──────────────────┐
+       │                     │polymarket_read.db│  (read replica)
+       │                     └──────────────────┘
+       │                              ▲
+       │                              │ ORM session in Gemini bot
+       │                              │
+       │                      ┌───────┴─────────┐
+       │                      │Flask app + UI   │
+       │                      │(intelligent_app)│
+       ▼                      └───────┬─────────┘
+┌──────────────┐   API pull           │ REST `/api/chat`
+│ update_kalshi│ ─────────────────────┘
+│ _data.py     │   sqlite writes    ┌───────────┐
+└──────────────┘ ─────────────────▶ │ kalshi.db │
+                                     └───────────┘
 ```
 
-2. **Install Python dependencies**
+### Components
+
+| Path | Description |
+| ---- | ----------- |
+| `intelligent_app.py` | Flask server + UI endpoints. Calls the Gemini bot, merges Kalshi results, returns structured markets and reasoning. |
+| `intelligent_gemini_bot.py` | Decision engine. Analyses a query once, decides SQL/BATCH/COMPARISON, enforces active-only filters, and surfaces strategy info + structured events. |
+| `update_market_data.py` | High-throughput Polymarket fetcher (parallel threads, ~20s cadence). Writes to `polymarket.db` and enriches market metadata. |
+| `db_sync.py` | Background service that copies the write DB into `polymarket_read.db` whenever no reads are active. |
+| `update_kalshi_data.py` | Kalshi crawler. Walks the trade API pages ~20s, upserts markets into `kalshi.db`, marks inactive ones. |
+| `prediction-mcp-server/` | Optional MCP server packaging the same workflow for Claude Desktop, Cursor, etc. Includes ChatGPT + Gemini tooling. |
+
+---
+
+## Data Refresh Workflow
+
+1. **Polymarket ingestion** – `python update_market_data.py`
+   - Bootstraps all active events, then runs in a 20s loop.
+   - Fetches enrichment (outcome prices, liquidity, best bid/ask, open interest).
+   - Uses 50-thread pool for fast per-event updates and flags inactive markets.
+
+2. **Replica sync** – `python db_sync.py`
+   - Tracks read locks via `ReadTracker` context manager.
+   - Copies `polymarket.db` ➟ `polymarket_read.db` when idle and verifies counts.
+
+3. **Kalshi ingestion** – `python update_kalshi_data.py`
+   - Pages through `https://api.elections.kalshi.com/trade-api/v2/markets`.
+   - Stores all fields (vol, liquidity, bid/ask, timestamps) in `kalshi.db`.
+   - Marks inactive markets if they disappear from the feed.
+
+> Both scripts can run continuously in their own terminal sessions. The Flask app will keep using the latest replicas on disk.
+
+---
+
+## Query Processing Flow
+
+1. **System prompt** – The bot is reminded to answer with real Polymarket _and/or_ Kalshi markets unless the question is generic.
+2. **Single analysis call** – `analyze_query_all_in_one()` asks Gemini to return:
+   - intent + filters + requested limit
+   - preferred strategy (`SQL`, `BATCH`, `COMPARISON`)
+   - required columns / domain hints
+   - **platform filter** (`POLYMARKET`, `KALSHI`, `BOTH`)
+3. **Strategy selection**
+   - Simple ranking language (“top 10 … by volume”) forces SQL regardless.
+   - Batch/comparison paths may pull Perplexity context for deeper reasoning.
+4. **Execution**
+   - **SQL**: sanitize query, enforce `is_active = 1`, append ordering, stream results.
+   - **Batch**: slice active events, send to Gemini for relevance scoring, keep ≥70.
+   - **Comparison**: execute multiple SQL aggregates, combine into markdown.
+5. **Platform filtering**
+   - Flask merges the Gemini response with Kalshi lookups if the filter includes Kalshi.
+   - `search_kalshi_markets` always enforces `is_active = 1` and `status IN ('open','active')` and links to `https://kalshi.com/markets/{ticker}`.
+6. **Structured output** – Each event record includes platform, title, volume, liquidity, domain/category, URL, and any reasoning from batch mode. This powers table sorting/filtering on the front end.
+
+The latest platform choice is exposed via `chatbot.get_platform_filter()` and included in JSON responses (`platform_filter` field).
+
+---
+
+## Requirements & Environment
+
+- Python 3.9+
+- SQLite 3.35+
+- API keys
+  - `GEMINI_API_KEY` (required)
+  - `OPENAI_API_KEY` (optional, for MCP ChatGPT tool)
+  - `PERPLEXITY_API_KEY` (optional, richer reasoning)
+
+Create an `.env` file at the repo root or export variables manually:
+
+```
+GEMINI_API_KEY=your_gemini_key
+PORT=5001          # optional, defaults to 5001
+DEBUG=False        # optional
+KALSHI_DB_PATH=kalshi.db
+PREDICTION_DB_PATH=polymarket_read.db
+```
+
+Install dependencies once:
+
 ```bash
 pip install -r requirements.txt
 ```
 
-3. **Set up environment variables**
-```bash
-# Create .env file
-echo "GEMINI_API_KEY=your_api_key_here" > .env
-echo "PORT=5002" >> .env
-echo "DEBUG=False" >> .env
-```
+---
 
-## MCP Server Bridge
+## Running the Stack
 
-Expose the same dataset and Gemini workflow inside MCP-compatible IDEs with the new `prediction-mcp-server` package (see `prediction-mcp-server/README.md`).
+In separate terminals (recommended):
 
-```bash
-# one-stop setup (creates .venv, bootstraps DB, writes config snippet)
-cd prediction-mcp-server
-python install.py
-```
-
-```bash
-# optional: create/update .env with DB path + Gemini key
-uvx prediction-mcp-server init
-
-# run the server (stdio transport for Claude Desktop, Cursor, etc.)
-uvx prediction-mcp-server serve
-```
-
-Add this server to your MCP client config with the command `prediction-mcp-server` and ensure `polymarket_read.db` stays in sync via `db_sync.py`.
-
-## 10/7
-
-Follow these terminals to bring the full stack online:
-
-1. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-2. **Configure environment**
-   ```bash
-   echo "GEMINI_API_KEY=your_api_key_here" > .env
-   echo "PORT=5002" >> .env
-   echo "DEBUG=False" >> .env
-   ```
-3. **Start market data ingestion** – keeps `polymarket.db` populated.
+1. **Polymarket updater**
    ```bash
    python update_market_data.py
    ```
-4. **Run the sync service** – mirrors writes into the read replica.
+2. **Replica sync**
    ```bash
    python db_sync.py
    ```
-5. **Launch the Flask app** – serves the UI at `http://localhost:5002`.
+3. **Kalshi updater**
+   ```bash
+   python update_kalshi_data.py
+   ```
+4. **Flask app**
    ```bash
    python intelligent_app.py
    ```
-6. **Open the web UI** at `http://localhost:5002` and optional logs at `/logs`.
+   - UI: `http://localhost:5001`
+   - Logs: `/tmp/intelligent_app.log`
 
-## Running the Application
+You can stop any service with `Ctrl+C` or `kill <pid>`; restarting picks up from the current DB snapshot.
 
-### Quick Start (All Components)
+### Verifying Data Fill
 
-Run all three components in separate terminal windows:
+- Polymarket counts:
+  ```bash
+  python - <<'PY'
+  import sqlite3
+  conn = sqlite3.connect('polymarket.db')
+  cur = conn.cursor()
+  cur.execute('SELECT COUNT(*) FROM events WHERE is_active = 1')
+  print(cur.fetchone()[0])
+  conn.close()
+  PY
+  ```
+- Kalshi counts:
+  ```bash
+  python - <<'PY'
+  import sqlite3
+  conn = sqlite3.connect('kalshi.db')
+  cur = conn.cursor()
+  cur.execute('SELECT COUNT(*) FROM kalshi_markets WHERE is_active = 1')
+  print(cur.fetchone()[0])
+  conn.close()
+  PY
+  ```
 
-**Terminal 1 - Backend/Frontend:**
-```bash
-python3 intelligent_app.py
-```
-Access the web interface at: http://localhost:5002
+---
 
-**Terminal 2 - Database Sync:**
-```bash
-python3 db_sync.py
-```
+## API Highlights
 
-**Terminal 3 - Market Data Updates:**
-```bash
-python3 update_market_data.py
-```
+`intelligent_app.py` exposes a simple REST surface:
 
-### Component Details
+| Endpoint | Method | Description |
+| -------- | ------ | ----------- |
+| `/` | GET | Main HTML interface. |
+| `/api/chat` | POST JSON `{"message": "…"}` | Runs Gemini pipeline and Kalshi lookup. Payload includes `response`, `events`, `platform_filter`, `thinking`, etc. |
+| `/api/filter-events` | POST | Client-side filtering helper. |
+| `/api/top-events` | GET | Top Polymarket events by volume. |
+| `/api/stats` | GET | Basic Polymarket DB stats. |
+| `/logs` | GET | Lightweight log viewer. |
 
-#### 1. Backend & Frontend (`intelligent_app.py`)
+Responses from `/api/chat` always reflect the chosen strategy (visible in server logs) and include structured records that the UI renders in a sortable list.
 
-The main Flask application that serves the web interface and handles chat queries.
+---
 
-```bash
-python3 intelligent_app.py
-```
+## MCP Server (Optional)
 
-**Features:**
-- Web interface at http://localhost:5002
-- REST API endpoints for chat, stats, and filtering
-- Intelligent query routing (SQL vs AI)
-- Real-time logging at http://localhost:5002/logs
+`prediction-mcp-server` packages the same data/logic for Model Context Protocol clients.
 
-**Key Endpoints:**
-- `POST /api/chat` - Process natural language queries
-- `GET /api/stats` - Get database statistics
-- `GET /api/top-events` - Get top events by volume
-- `POST /api/filter-events` - Filter events by criteria
-- `GET /health` - Health check
-
-#### 2. Database Sync (`db_sync.py`)
-
-Synchronizes the write database to the read-only database every 20 seconds.
-
-```bash
-python3 db_sync.py
-```
-
-**Purpose:**
-- Ensures read queries don't block write operations
-- Maintains data consistency between databases
-- Tracks read operations to prevent sync conflicts
-
-#### 3. Market Data Updates (`update_market_data.py`)
-
-Fetches live market data from Polymarket API every 20 seconds.
+Key commands:
 
 ```bash
-python3 update_market_data.py
+cd prediction-mcp-server
+python install.py              # guided setup
+uvx prediction-mcp-server init # configure DB paths + keys
+uvx prediction-mcp-server serve
 ```
 
-**Updates:**
-- Market volume
-- Outcome prices
-- Liquidity
-- Open interest
-- Active/inactive status
+Notable tools:
+- `intelligent_market_analysis` – mirrors the Gemini pipeline.
+- `chatgpt_market_analysis` – OpenAI-backed reasoning with Polymarket context.
+- `list_*` / `search_*` – SQL utilities for both datasets.
 
-**Performance:**
-- Uses 50 parallel workers for fast fetching
-- Processes ~2000 markets in under 10 seconds
+See `prediction-mcp-server/README.md` for the full command set.
 
-## Database Architecture
+---
 
-### Two-Database System
+## Development Notes
 
-1. **`polymarket.db`** (Write Database)
-   - Used by `update_market_data.py` for writes
-   - Updated every 20 seconds with fresh market data
+- **Platform filter**: stored on the bot object; defaults to `BOTH`. LLM prompts can explicitly request “Kalshi only” or “Polymarket only.” The Flask layer respects it when merging results.
+- **Active-only enforcement**: all Polymarket queries inject `is_active = 1`; Kalshi SQL adds both `is_active = 1` and `status IN ('open','active')`.
+- **Logging**: key decisions (strategy, keywords, Perplexity queries, platform filter) are written through the Flask in-memory logger and stdout.
+- **Extensibility ideas**: add Kalshi-specific semantic batching, expose strategy info in the UI, or stream progress updates via SSE/WebSockets.
 
-2. **`polymarket_read.db`** (Read Database)
-   - Used by `intelligent_app.py` for queries
-   - Synced from write DB every 20 seconds
-   - No blocking from write operations
-
-### Schema
-
-**Events Table:**
-- `id` - Unique event ID
-- `title` - Market question
-- `slug` - URL slug
-- `domain` - Category (Sports, Politics, etc.)
-- `volume` - Trading volume in USD
-- `liquidity` - Available liquidity
-- `outcome_prices` - Current market odds
-- `is_active` - Active/closed status
-- `open_interest` - Total positions
-- `created_at` - Creation timestamp
-
-## Query Mechanism
-
-### How It Works
-
-1. **User Input** → Single Gemini API call analyzes:
-   - Query intent (find events, compare, statistics, etc.)
-   - Strategy needed (SQL or AI semantic search)
-   - Domain filter (if specified)
-   - Output format (list, table, comparison, etc.)
-   - Result limit
-
-2. **Strategy Execution:**
-
-   **SQL Strategy** (Fast - <1 second):
-   - Direct database queries
-   - Used for: top events, domain filtering, volume/liquidity queries
-
-   **AI Batch Strategy** (Comprehensive - 15-30 seconds):
-   - Splits active events into batches (~1000 each)
-   - Parallel processing with 4 workers
-   - Each batch scored for relevance (0-100)
-   - Returns events with score ≥ 75
-
-3. **Output Formatting** → Gemini formats results based on determined output type
-
-### Example Queries
-
-**SQL Strategy (Fast):**
-- "Top 10 sports events"
-- "All finance markets"
-- "Events with volume over $100k"
-
-**AI Batch Strategy (Semantic):**
-- "Markets affected by Fed rate changes"
-- "Events related to AI regulation"
-- "What happens if Microsoft acquires Google?"
-
-## Rate Limits & Optimization
-
-### Gemini API Free Tier Limits
-- 15 requests per minute
-- 125,000 tokens per minute
-
-### Optimizations Applied
-- Reduced batch workers from 5 to 4 (keeps under token limit)
-- Each query uses 1 analysis call + 2-10 batch calls
-- Token usage: ~26,604 tokens per batch × 4 workers = ~106k tokens
-
-## Frontend Features
-
-### Main Interface
-- Clean chat interface with message history
-- Real-time response streaming
-- Markdown formatting support
-
-### Advanced Filtering
-After query results appear, you can filter by:
-- **Volume**: Min/max trading volume
-- **Liquidity**: Min/max liquidity
-- **Relevance**: Minimum relevance score
-- **Keyword**: Search in titles and explanations
-- **Sort**: By volume, liquidity, or relevance
-
-### Live Logs
-View application logs at http://localhost:5002/logs:
-- Query tracking
-- Response times
-- Error messages
-- System events
+---
 
 ## Troubleshooting
 
-### Rate Limit Errors (429)
-If you see "quota exceeded" errors:
-- Reduce query frequency
-- The system already optimized for 4 parallel workers
-- Free tier allows ~8-10 complex queries per minute
+| Symptom | Fix |
+| ------- | --- |
+| Blank results | Ensure updaters are running and DBs exist (`ls -lh *.db`). |
+| Kalshi link 404 | Check ticker; links use `https://kalshi.com/markets/{ticker}`. |
+| Gemini errors | Verify `GEMINI_API_KEY` and network access. |
+| MCP tools missing | Re-run `uvx prediction-mcp-server init` and ensure env vars propagate. |
 
-### Database Not Updating
-1. Check if `update_market_data.py` is running
-2. Check if `db_sync.py` is running
-3. Verify databases exist: `ls -lh *.db`
-
-### Port Already in Use
-Change the port in `.env`:
-```bash
-PORT=5003
-```
-
-## Project Structure
-
-```
-prediction-market-chatbot/
-├── intelligent_app.py                  # Main Flask application
-├── intelligent_gemini_bot.py           # AI query processor (Polymarket only)
-├── intelligent_multi_platform_bot.py   # NEW: AI query processor (both platforms)
-├── db_sync.py                          # Database synchronization
-├── update_market_data.py               # Polymarket data fetcher
-├── update_kalshi_data.py               # NEW: Kalshi data fetcher
-├── database.py                         # Polymarket database models
-├── kalshi_database.py                  # NEW: Kalshi database models
-├── requirements.txt                    # Python dependencies
-├── templates/                          # HTML templates
-│   ├── index.html                     # Main chat interface
-│   └── logs.html                      # Logging interface
-├── polymarket.db                      # Polymarket write database
-├── polymarket_read.db                 # Polymarket read database
-├── kalshi.db                          # NEW: Kalshi write database
-└── kalshi_read.db                     # NEW: Kalshi read database
-```
-
-## Platform Coverage
-
-- **Polymarket**: ~3,000 active markets
-  - Categories: Sports, Politics, Finance, Entertainment, Technology
-  - Update frequency: 20 seconds
-
-- **Kalshi**: ~135,000 active markets
-  - Categories: Sports, Politics, Economics, Weather, and more
-  - Update frequency: 20 seconds
-
-## Multi-Platform Intelligent Bot
-
-The new `intelligent_multi_platform_bot.py` provides unified querying across both platforms:
-
-```python
-from intelligent_multi_platform_bot import IntelligentMultiPlatformBot
-
-bot = IntelligentMultiPlatformBot(api_key=GEMINI_API_KEY)
-
-# Query both platforms simultaneously
-response = bot.process_query("Top markets about interest rates")
-
-# Results show markets from both Polymarket (🔵) and Kalshi (🟢) ranked by relevance
-```
-
-**Features:**
-- Automatic platform detection (queries "polymarket" or "kalshi" or both)
-- Unified relevance scoring across platforms
-- Visual platform indicators: 🔵 Polymarket, 🟢 Kalshi
-- Combined results sorted by AI relevance score
-
-## API Rate Limits
-
-### Polymarket API
-- No strict limits observed
-- Fetches ~2000 events every 20 seconds without issues
-
-### Gemini API (Free Tier)
-- 15 requests/minute
-- 125,000 tokens/minute input
-- Optimized to stay within limits
-
-## Performance Metrics
-
-- **SQL Queries**: <1 second
-- **AI Semantic Search**: 15-30 seconds (depending on batch count)
-- **Market Data Updates**: 20 second intervals
-- **Database Sync**: 20 second intervals
-- **Parallel Batch Processing**: 4 workers
-- **Market Fetch Workers**: 50 workers
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test with `test_*.py` scripts
-5. Submit a pull request
+---
 
 ## License
 
-MIT License
+No explicit license file is provided. Treat the codebase as proprietary unless a license is added.
+

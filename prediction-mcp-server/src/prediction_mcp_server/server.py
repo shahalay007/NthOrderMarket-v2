@@ -1,9 +1,11 @@
-"""FastMCP server exposing prediction market data and Gemini analysis tools."""
+"""FastMCP server exposing prediction market data and Gemini/ChatGPT analysis tools."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import re
 import sqlite3
 import sys
 from contextlib import closing
@@ -14,6 +16,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+from openai import OpenAI
 
 from .db_sync_service import ReadTracker
 
@@ -135,6 +138,7 @@ mcp = FastMCP(SERVER_ID, log_level=LOG_LEVEL)
 
 _gemini_bot: Optional[IntelligentGeminiBot] = None
 _multi_platform_bot: Optional[Any] = None  # IntelligentMultiPlatformBot type
+_openai_client: Optional[OpenAI] = None
 
 
 def _get_gemini_bot() -> IntelligentGeminiBot:
@@ -209,6 +213,155 @@ def _market_markdown(row: sqlite3.Row) -> str:
         • Link: {url}
         """
     ).strip()
+
+
+def _get_openai_client() -> OpenAI:
+    """Return a cached OpenAI client instance."""
+    global _openai_client
+    if _openai_client is not None:
+        return _openai_client
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY not set; ChatGPT market analysis is unavailable.")
+
+    _openai_client = OpenAI(api_key=api_key)
+    return _openai_client
+
+
+_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "how",
+    "if",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "their",
+    "then",
+    "there",
+    "they",
+    "this",
+    "to",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "will",
+    "with",
+    "would",
+    "markets",
+    "market",
+    "prediction",
+    "show",
+    "list",
+    "give",
+}
+
+
+def _extract_keywords(text: str, limit: int = 6) -> List[str]:
+    """Extract rough keywords from user input for SQL filtering."""
+    tokens = re.findall(r"[a-z0-9']+", text.lower())
+    keywords: List[str] = []
+    for token in tokens:
+        normalized = token.strip("'")
+        if (
+            len(normalized) >= 3
+            and normalized not in _STOPWORDS
+            and normalized not in keywords
+        ):
+            keywords.append(normalized)
+        if len(keywords) >= limit:
+            break
+    return keywords
+
+
+def _fetch_market_context(question: str, limit: int = 15) -> List[sqlite3.Row]:
+    """Return a compact set of markets relevant to the user's question."""
+    keywords = _extract_keywords(question)
+
+    params: List[Any] = []
+    filters = ["is_active = 1"]
+
+    if keywords:
+        keyword_clauses = []
+        for kw in keywords:
+            like = f"%{kw}%"
+            keyword_clauses.append(
+                "(LOWER(title) LIKE ? OR LOWER(description) LIKE ? OR LOWER(slug) LIKE ? "
+                "OR LOWER(domain) LIKE ? OR LOWER(section) LIKE ? OR LOWER(subsection) LIKE ?)"
+            )
+            params.extend([like, like, like, like, like, like])
+        filters.append("(" + " OR ".join(keyword_clauses) + ")")
+
+    sql = f"""
+        SELECT id, slug, title, domain, section, subsection, volume, liquidity, updated_at
+        FROM events
+        WHERE {' AND '.join(filters)}
+        ORDER BY COALESCE(volume, 0) DESC, datetime(COALESCE(updated_at, last_trade_date)) DESC
+        LIMIT ?
+    """
+    params.append(limit)
+
+    rows = _fetch_rows(sql, params)
+    if rows:
+        return rows
+
+    # Fallback: top markets by volume when no keyword hits
+    return _fetch_rows(
+        """
+        SELECT id, slug, title, domain, section, subsection, volume, liquidity, updated_at
+        FROM events
+        WHERE is_active = 1
+        ORDER BY COALESCE(volume, 0) DESC
+        LIMIT ?
+        """,
+        (min(limit, 20),),
+    )
+
+
+def _format_chatgpt_context(rows: Iterable[sqlite3.Row]) -> str:
+    """Format market rows into concise bullet points for ChatGPT prompts."""
+    lines = []
+    for idx, row in enumerate(rows, 1):
+        data = dict(row)
+        hierarchy = " › ".join(
+            part
+            for part in (
+                data.get("domain"),
+                data.get("section"),
+                data.get("subsection"),
+            )
+            if part
+        )
+        volume = data.get("volume") or 0
+        liquidity = data.get("liquidity") or 0
+        url = f"https://polymarket.com/event/{data.get('slug')}" if data.get("slug") else "n/a"
+        lines.append(
+            dedent(
+                f"""
+                {idx}. {data.get('title')}
+                   • Category: {hierarchy or 'n/a'}
+                   • Volume: ${volume:,.0f} | Liquidity: ${liquidity:,.0f}
+                   • URL: {url}
+                """
+            ).strip()
+        )
+    return "\n".join(lines) if lines else "No specific markets matched the query."
 
 
 @mcp.tool()
@@ -412,6 +565,60 @@ async def intelligent_market_analysis(question: str) -> str:
         return bot.process_query(question.strip())
     except Exception as exc:  # pragma: no cover
         return f"Intelligent analysis failed: {exc}"
+
+
+@mcp.tool()
+async def chatgpt_market_analysis(question: str, limit: Optional[int] = None, model: Optional[str] = None) -> str:
+    """Answer market questions with ChatGPT using Polymarket context."""
+    if not question or len(question.strip()) < 4:
+        raise ValueError("Provide a question with at least four characters.")
+
+    rows = _fetch_market_context(question, limit or 15)
+    context = _format_chatgpt_context(rows)
+    prompt = dedent(
+        f"""
+        You are a prediction market analyst. Use only the market context provided below plus the user question.
+        Prefer concrete market references, relevant metrics, and clear takeaways. If the context lacks an answer, say so.
+
+        User question:
+        {question.strip()}
+
+        Market context:
+        {context}
+        """
+    ).strip()
+
+    client = _get_openai_client()
+    model_name = model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+    loop = asyncio.get_running_loop()
+
+    def _call_openai() -> str:
+        response = client.chat.completions.create(
+            model=model_name,
+            temperature=0.2,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an expert on prediction markets. "
+                        "Ground answers in the supplied Polymarket context."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+        )
+        if not response.choices:
+            return "ChatGPT returned no response."
+        return response.choices[0].message.content.strip()
+
+    try:
+        answer = await loop.run_in_executor(None, _call_openai)
+    except Exception as exc:  # pragma: no cover
+        return f"ChatGPT analysis failed: {exc}"
+
+    header = "**ChatGPT Analysis**"
+    return f"{header}\n\n{answer}"
 
 
 # === Kalshi-specific tools ===
