@@ -55,3 +55,6 @@ Thumbs.db
 secrets/
 *.key
 *.pem
+
+# Database files
+*.db
