@@ -1,15 +1,17 @@
-# Intelligent Polymarket Chatbot
+# Intelligent Multi-Platform Prediction Market Chatbot
 
-A sophisticated chatbot application for querying Polymarket prediction markets using natural language. Combines SQL queries for structured data retrieval with AI-powered semantic search for complex queries.
+A sophisticated chatbot application for querying prediction markets from **Polymarket** and **Kalshi** using natural language. Combines SQL queries for structured data retrieval with AI-powered semantic search for complex queries across both platforms.
 
 ## Features
 
+- **Multi-Platform Support**: Query both Polymarket (~3,000 markets) and Kalshi (~135,000 markets) simultaneously
 - **Intelligent Query Processing**: Automatically chooses between SQL (fast) and AI semantic search (comprehensive)
 - **Natural Language Interface**: Ask questions in plain English about prediction markets
-- **Real-time Data**: Market data updates every 20 seconds from Polymarket API
+- **Real-time Data**: Market data updates every 20 seconds from both APIs
 - **Advanced Filtering**: Filter results by volume, liquidity, relevance, and keywords
-- **Domain Categories**: Markets organized into Sports, Politics, Finance, Entertainment, Geopolitics, Technology, and Miscellaneous
+- **Domain Categories**: Markets organized by categories across both platforms
 - **Dual Database Architecture**: Separate write and read databases for optimal performance
+- **Unified Results**: See markets from both platforms ranked by relevance in a single view
 
 ## Prerequisites
 
@@ -282,19 +284,55 @@ PORT=5003
 ## Project Structure
 
 ```
-polymarket-chatbot/
-├── intelligent_app.py          # Main Flask application
-├── intelligent_gemini_bot.py   # AI query processor
-├── db_sync.py                  # Database synchronization
-├── update_market_data.py       # Market data fetcher
-├── database.py                 # Database models
-├── requirements.txt            # Python dependencies
-├── templates/                  # HTML templates
-│   ├── index.html             # Main chat interface
-│   └── logs.html              # Logging interface
-├── polymarket.db              # Write database
-└── polymarket_read.db         # Read database
+prediction-market-chatbot/
+├── intelligent_app.py                  # Main Flask application
+├── intelligent_gemini_bot.py           # AI query processor (Polymarket only)
+├── intelligent_multi_platform_bot.py   # NEW: AI query processor (both platforms)
+├── db_sync.py                          # Database synchronization
+├── update_market_data.py               # Polymarket data fetcher
+├── update_kalshi_data.py               # NEW: Kalshi data fetcher
+├── database.py                         # Polymarket database models
+├── kalshi_database.py                  # NEW: Kalshi database models
+├── requirements.txt                    # Python dependencies
+├── templates/                          # HTML templates
+│   ├── index.html                     # Main chat interface
+│   └── logs.html                      # Logging interface
+├── polymarket.db                      # Polymarket write database
+├── polymarket_read.db                 # Polymarket read database
+├── kalshi.db                          # NEW: Kalshi write database
+└── kalshi_read.db                     # NEW: Kalshi read database
 ```
+
+## Platform Coverage
+
+- **Polymarket**: ~3,000 active markets
+  - Categories: Sports, Politics, Finance, Entertainment, Technology
+  - Update frequency: 20 seconds
+
+- **Kalshi**: ~135,000 active markets
+  - Categories: Sports, Politics, Economics, Weather, and more
+  - Update frequency: 20 seconds
+
+## Multi-Platform Intelligent Bot
+
+The new `intelligent_multi_platform_bot.py` provides unified querying across both platforms:
+
+```python
+from intelligent_multi_platform_bot import IntelligentMultiPlatformBot
+
+bot = IntelligentMultiPlatformBot(api_key=GEMINI_API_KEY)
+
+# Query both platforms simultaneously
+response = bot.process_query("Top markets about interest rates")
+
+# Results show markets from both Polymarket (🔵) and Kalshi (🟢) ranked by relevance
+```
+
+**Features:**
+- Automatic platform detection (queries "polymarket" or "kalshi" or both)
+- Unified relevance scoring across platforms
+- Visual platform indicators: 🔵 Polymarket, 🟢 Kalshi
+- Combined results sorted by AI relevance score
 
 ## API Rate Limits
 

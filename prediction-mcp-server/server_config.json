@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "prediction-mcp-server": {
+      "command": "/Users/alayshah/Desktop/NthOrderMarket/prediction-mcp-server/.venv/bin/python",
+      "args": ["-m", "prediction_mcp_server.cli", "serve"],
+      "env": {
+        "PREDICTION_CONFIG_FILE": "/Users/alayshah/Desktop/NthOrderMarket/prediction-mcp-server/.env"
+      }
+    }
+  }
+}

@@ -22,10 +22,26 @@ try:
 except ImportError:  # pragma: no cover
     IntelligentGeminiBot = None  # type: ignore
 
+# Try to import the multi-platform bot
+try:
+    import sys
+    project_root = Path(__file__).parent.parent.parent.parent
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+    from intelligent_multi_platform_bot import IntelligentMultiPlatformBot
+except ImportError:  # pragma: no cover
+    IntelligentMultiPlatformBot = None  # type: ignore
+
 
 def _get_db_path() -> Path:
     """Resolve the SQLite database path from the environment."""
     raw = os.getenv("PREDICTION_DB_PATH") or "polymarket_read.db"
+    return Path(raw).expanduser()
+
+
+def _get_kalshi_db_path() -> Path:
+    """Resolve the Kalshi SQLite database path from the environment."""
+    raw = os.getenv("KALSHI_DB_PATH") or "kalshi_read.db"
     return Path(raw).expanduser()
 
 
@@ -118,6 +134,7 @@ SERVER_ID = os.getenv("PREDICTION_MCP_SERVER_ID", "prediction-markets")
 mcp = FastMCP(SERVER_ID, log_level=LOG_LEVEL)
 
 _gemini_bot: Optional[IntelligentGeminiBot] = None
+_multi_platform_bot: Optional[Any] = None  # IntelligentMultiPlatformBot type
 
 
 def _get_gemini_bot() -> IntelligentGeminiBot:
@@ -136,6 +153,33 @@ def _get_gemini_bot() -> IntelligentGeminiBot:
 
     _gemini_bot = IntelligentGeminiBot(api_key, db_path=str(_ensure_database()))
     return _gemini_bot
+
+
+def _get_multi_platform_bot() -> Any:
+    """Get or create the multi-platform bot instance."""
+    global _multi_platform_bot
+    if _multi_platform_bot is not None:
+        return _multi_platform_bot
+
+    if IntelligentMultiPlatformBot is None:
+        raise RuntimeError(
+            "IntelligentMultiPlatformBot could not be imported. "
+            "Ensure intelligent_multi_platform_bot.py is in the project root."
+        )
+
+    api_key = os.getenv("GEMINI_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY not set; intelligent multi-platform search is unavailable.")
+
+    polymarket_db = str(_ensure_database())
+    kalshi_db = str(_ensure_kalshi_database())
+
+    _multi_platform_bot = IntelligentMultiPlatformBot(
+        api_key,
+        polymarket_db_path=polymarket_db,
+        kalshi_db_path=kalshi_db
+    )
+    return _multi_platform_bot
 
 
 def _market_markdown(row: sqlite3.Row) -> str:
@@ -368,6 +412,361 @@ async def intelligent_market_analysis(question: str) -> str:
         return bot.process_query(question.strip())
     except Exception as exc:  # pragma: no cover
         return f"Intelligent analysis failed: {exc}"
+
+
+# === Kalshi-specific tools ===
+
+def _ensure_kalshi_database() -> Path:
+    """Ensure Kalshi database exists and return its path."""
+    path = _get_kalshi_db_path()
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Kalshi database not found at {path.resolve()}. "
+            "Set KALSHI_DB_PATH to the Kalshi read replica."
+        )
+    return path
+
+
+def _fetch_kalshi_rows(sql: str, params: Iterable[Any] = (), fetch_one: bool = False) -> Any:
+    """Run a read-only SQL query on Kalshi database."""
+    database = _ensure_kalshi_database()
+
+    with closing(sqlite3.connect(database)) as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute(sql, tuple(params))
+        return cursor.fetchone() if fetch_one else cursor.fetchall()
+
+
+def _kalshi_market_markdown(row: sqlite3.Row) -> str:
+    """Format a Kalshi market row as markdown."""
+    data = dict(row)
+    ticker = data.get("ticker", "n/a")
+    volume = data.get("volume") or 0
+    liquidity = data.get("liquidity") or 0
+    yes_bid = data.get("yes_bid")
+    yes_ask = data.get("yes_ask")
+
+    # Format prices
+    price_str = "n/a"
+    if yes_bid is not None and yes_ask is not None:
+        price_str = f"Yes: {yes_bid}¢ bid / {yes_ask}¢ ask"
+    elif yes_bid is not None:
+        price_str = f"Yes: {yes_bid}¢ bid"
+    elif yes_ask is not None:
+        price_str = f"Yes: {yes_ask}¢ ask"
+
+    status = data.get("status", "unknown")
+    category = data.get("category") or "Uncategorized"
+
+    return dedent(
+        f"""
+        **{data.get('title')}**
+        • Ticker: `{ticker}`
+        • Category: {category}
+        • Status: {status}
+        • Volume: ${volume:,.0f} | Liquidity: ${liquidity:,.0f}
+        • Prices: {price_str}
+        • Close: {_format_timestamp(data.get('close_time'))}
+        • Link: https://kalshi.com/markets/{ticker}
+        """
+    ).strip()
+
+
+@mcp.tool()
+async def list_kalshi_markets(
+    limit: Optional[int] = None,
+    category_filter: Optional[str] = None,
+    sort_by: str = "volume",
+    group_by_event: bool = True,
+) -> str:
+    """Return top active Kalshi markets sorted by volume, liquidity, or close time.
+
+    Args:
+        limit: Maximum number of results to return
+        category_filter: Filter by category name
+        sort_by: Sort by 'volume', 'liquidity', or 'close_time'
+        group_by_event: If True, groups contracts by event_ticker and sums volumes (default: True)
+    """
+    order_clauses = {
+        "volume": "COALESCE(total_volume, 0) DESC" if group_by_event else "COALESCE(volume, 0) DESC",
+        "liquidity": "COALESCE(total_liquidity, 0) DESC" if group_by_event else "COALESCE(liquidity, 0) DESC",
+        "close_time": "datetime(close_time) ASC",
+    }
+    order = order_clauses.get(sort_by.lower())
+    if not order:
+        raise ValueError(f"Unsupported sort_by '{sort_by}'. Use volume, liquidity, or close_time.")
+
+    params: List[Any] = []
+    filters = ["is_active = 1"]
+
+    if category_filter:
+        filters.append("LOWER(category) LIKE ?")
+        params.append(f"%{category_filter.lower()}%")
+
+    if group_by_event:
+        # Group by event_ticker and sum volumes/liquidity
+        sql = f"""
+            SELECT
+                event_ticker,
+                MAX(ticker) as ticker,
+                MAX(title) as title,
+                MAX(category) as category,
+                MAX(status) as status,
+                SUM(COALESCE(volume, 0)) as total_volume,
+                SUM(COALESCE(liquidity, 0)) as total_liquidity,
+                SUM(COALESCE(open_interest, 0)) as total_open_interest,
+                MAX(yes_bid) as yes_bid,
+                MAX(yes_ask) as yes_ask,
+                MAX(close_time) as close_time,
+                COUNT(*) as contract_count
+            FROM kalshi_markets
+            WHERE {' AND '.join(filters)}
+            GROUP BY event_ticker
+            ORDER BY {order}
+            LIMIT ?
+        """
+    else:
+        # Original query - individual contracts
+        sql = f"""
+            SELECT ticker, title, category, status, volume as total_volume, liquidity as total_liquidity,
+                   yes_bid, yes_ask, close_time, open_interest as total_open_interest, 1 as contract_count
+            FROM kalshi_markets
+            WHERE {' AND '.join(filters)}
+            ORDER BY {order}
+            LIMIT ?
+        """
+
+    params.append(_get_default_limit(limit))
+
+    rows = _fetch_kalshi_rows(sql, params)
+    if not rows:
+        return "No active Kalshi markets matched the requested filters."
+
+    sections = []
+    for idx, row in enumerate(rows):
+        data = dict(row)
+        # Format with grouped data
+        ticker = data.get("ticker", "n/a")
+        volume = data.get("total_volume") or 0
+        liquidity = data.get("total_liquidity") or 0
+        contract_count = data.get("contract_count", 1)
+
+        yes_bid = data.get("yes_bid")
+        yes_ask = data.get("yes_ask")
+
+        price_str = "n/a"
+        if yes_bid is not None and yes_ask is not None:
+            price_str = f"Yes: {yes_bid}¢ bid / {yes_ask}¢ ask"
+        elif yes_bid is not None:
+            price_str = f"Yes: {yes_bid}¢ bid"
+        elif yes_ask is not None:
+            price_str = f"Yes: {yes_ask}¢ ask"
+
+        status = data.get("status", "unknown")
+        category = data.get("category") or "Uncategorized"
+
+        contract_info = f" ({contract_count} contracts)" if group_by_event and contract_count > 1 else ""
+
+        market_str = dedent(
+            f"""
+            **{data.get('title')}**{contract_info}
+            • Ticker: `{ticker}`
+            • Category: {category}
+            • Status: {status}
+            • Volume: ${volume:,.0f} | Liquidity: ${liquidity:,.0f}
+            • Prices: {price_str}
+            • Close: {_format_timestamp(data.get('close_time'))}
+            • Link: https://kalshi.com/markets/{ticker}
+            """
+        ).strip()
+
+        sections.append(f"{idx+1}. {market_str}")
+
+    return "\n\n".join(sections)
+
+
+@mcp.tool()
+async def search_kalshi_markets(
+    query: str,
+    limit: Optional[int] = None,
+    include_inactive: bool = False,
+) -> str:
+    """Search Kalshi markets by title or subtitle."""
+    if not query or len(query.strip()) < 2:
+        raise ValueError("Provide a search query with at least two characters.")
+
+    params: List[Any] = []
+    filters = ["(LOWER(title) LIKE ? OR LOWER(subtitle) LIKE ?)"]
+    like = f"%{query.lower()}%"
+    params.extend([like, like])
+
+    if not include_inactive:
+        filters.append("is_active = 1")
+
+    sql = f"""
+        SELECT ticker, title, category, status, volume, liquidity,
+               yes_bid, yes_ask, close_time, open_interest
+        FROM kalshi_markets
+        WHERE {' AND '.join(filters)}
+        ORDER BY COALESCE(volume, 0) DESC
+        LIMIT ?
+    """
+    params.append(_get_default_limit(limit))
+
+    rows = _fetch_kalshi_rows(sql, params)
+    if not rows:
+        return f"No Kalshi markets found matching '{query}'."
+
+    results = [f"{idx+1}. {_kalshi_market_markdown(row)}" for idx, row in enumerate(rows)]
+    return "\n\n".join(results)
+
+
+@mcp.tool()
+async def kalshi_market_details(ticker: str) -> str:
+    """Return detailed information for a specific Kalshi market by ticker."""
+    if not ticker:
+        raise ValueError("Provide a ticker.")
+
+    sql = """
+        SELECT *
+        FROM kalshi_markets
+        WHERE ticker = ?
+        LIMIT 1
+    """
+
+    row = _fetch_kalshi_rows(sql, (ticker,), fetch_one=True)
+    if not row:
+        return f"Kalshi market '{ticker}' not found."
+
+    data = dict(row)
+
+    aux_fields = [
+        ("Event Ticker", data.get("event_ticker")),
+        ("Market Type", data.get("market_type")),
+        ("Subtitle", data.get("subtitle")),
+        ("Open Interest", data.get("open_interest")),
+        ("No Bid", f"{data.get('no_bid')}¢" if data.get("no_bid") is not None else None),
+        ("No Ask", f"{data.get('no_ask')}¢" if data.get("no_ask") is not None else None),
+        ("Last Price", f"{data.get('last_price')}¢" if data.get("last_price") is not None else None),
+        ("Open Time", _format_timestamp(data.get("open_time"))),
+        ("Expiration", _format_timestamp(data.get("expiration_time"))),
+        ("Result", data.get("result")),
+    ]
+
+    extra_lines = []
+    for label, value in aux_fields:
+        if value is not None:
+            extra_lines.append(f"• {label}: {value}")
+
+    return (
+        f"{_kalshi_market_markdown(row)}\n\n"
+        f"Additional Details:\n"
+        + ("\n".join(extra_lines) if extra_lines else "• No additional details available.")
+    )
+
+
+@mcp.tool()
+async def kalshi_market_stats() -> str:
+    """Return aggregate statistics for the Kalshi market dataset."""
+    totals = _fetch_kalshi_rows(
+        """
+        SELECT
+            COUNT(*) AS total_markets,
+            SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active_markets,
+            SUM(volume) AS total_volume,
+            AVG(liquidity) AS avg_liquidity
+        FROM kalshi_markets
+        """,
+        (),
+        fetch_one=True,
+    )
+
+    if not totals:
+        return "No Kalshi market data available."
+
+    total_markets = totals["total_markets"] or 0
+    active_markets = totals["active_markets"] or 0
+    total_volume = float(totals["total_volume"] or 0)
+    avg_liquidity = float(totals["avg_liquidity"] or 0)
+
+    by_category = _fetch_kalshi_rows(
+        """
+        SELECT category, COUNT(*) AS count, SUM(volume) AS volume
+        FROM kalshi_markets
+        WHERE is_active = 1
+        GROUP BY category
+        ORDER BY CASE WHEN volume IS NULL THEN 1 ELSE 0 END, volume DESC
+        LIMIT 10
+        """
+    )
+
+    lines = [
+        "**Kalshi Dataset Overview**",
+        f"- Total markets: {int(total_markets):,}",
+        f"- Active markets: {int(active_markets):,}",
+        f"- Total volume: ${total_volume:,.0f}",
+        f"- Avg liquidity (active): ${avg_liquidity:,.0f}",
+        "",
+        "**Top Categories by Volume (active)**",
+    ]
+
+    if by_category:
+        for row in by_category:
+            category = row["category"] or "Uncategorized"
+            volume = float(row["volume"] or 0)
+            count = row["count"] or 0
+            lines.append(f"- {category}: ${volume:,.0f} across {count} markets")
+    else:
+        lines.append("No active category breakdown available.")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def intelligent_search_multi_platform(
+    question: str,
+    platform: str = "both"
+) -> str:
+    """
+    Use AI semantic search across Polymarket and/or Kalshi with relevance scoring.
+
+    This is a SLOW operation (15-30 seconds) that uses Gemini AI to:
+    - Understand semantic relationships
+    - Score markets by relevance (0-100)
+    - Provide reasoning for each match
+    - Search across both platforms or target a specific one
+
+    Args:
+        question: Natural language query (e.g., "markets affected by Fed rate increases")
+        platform: Which platform(s) to search - "polymarket", "kalshi", or "both" (default)
+
+    Returns:
+        Markets from both platforms ranked by AI relevance score with explanations.
+        Format: 🔵 = Polymarket, 🟢 = Kalshi
+
+    Note: This tool makes multiple Gemini API calls and may take 15-30 seconds.
+          For simple keyword searches, use search_markets or search_kalshi_markets instead.
+    """
+    if not question or len(question.strip()) < 4:
+        raise ValueError("Provide a question with at least four characters.")
+
+    # Validate platform parameter
+    platform = platform.lower().strip()
+    if platform not in ["polymarket", "kalshi", "both"]:
+        raise ValueError("Platform must be 'polymarket', 'kalshi', or 'both'")
+
+    bot = _get_multi_platform_bot()
+    try:
+        # Inject platform preference into query if specified
+        if platform != "both":
+            modified_question = f"{platform} {question}"
+        else:
+            modified_question = question.strip()
+
+        return bot.process_query(modified_question)
+    except Exception as exc:  # pragma: no cover
+        return f"Multi-platform intelligent search failed: {exc}"
 
 
 class PredictionMCPServer:
