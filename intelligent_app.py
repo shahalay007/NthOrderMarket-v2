@@ -39,7 +39,7 @@ def log_message(level, message, response_time=None):
         app_logs.pop(0)
 
 # Initialize intelligent chatbot with read-only database and log callback
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', 'AIzaSyAX25ZJUVWxsSQWqkvJs2yB2fidcXO8KJE')
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', 'AIzaSyAxDVBBTQGcR9Em_2vP_8960ayYWl8UFKk')
 chatbot = IntelligentGeminiBot(GEMINI_API_KEY, db_path='polymarket_read.db', log_callback=log_message)
 
 STOPWORDS = {
