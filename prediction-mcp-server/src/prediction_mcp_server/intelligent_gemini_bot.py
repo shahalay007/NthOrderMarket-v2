@@ -23,7 +23,7 @@ class IntelligentGeminiBot:
     def __init__(self, api_key, db_path='polymarket_read.db', log_callback=None):
         """Initialize intelligent Gemini chatbot with read-only database."""
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-2.5-pro')
+        self.model = genai.GenerativeModel('gemini-1.5-flash')
         self.db = Database(db_path=db_path)
         self.db_path = db_path
         self.log_callback = log_callback  # Callback for logging to Flask
