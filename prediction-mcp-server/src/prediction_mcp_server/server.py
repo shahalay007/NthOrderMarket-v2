@@ -414,7 +414,7 @@ async def search_markets(
     limit: Optional[int] = None,
     include_inactive: bool = False,
 ) -> str:
-    """Search markets by title, description, or slug."""
+    """Search markets by title, description, or slug. Falls back to intelligent AI search if no SQL results."""
     if not query or len(query.strip()) < 2:
         raise ValueError("Provide a search query with at least two characters.")
 
@@ -437,8 +437,14 @@ async def search_markets(
     params.append(_get_default_limit(limit))
 
     rows = _fetch_rows(sql, params)
+    
+    # If no SQL results, fall back to intelligent bot for semantic search
     if not rows:
-        return f"No markets found matching '{query}'."
+        try:
+            bot = _get_gemini_bot()
+            return bot.process_query(query.strip())
+        except Exception as exc:
+            return f"No exact matches found. Intelligent search also failed: {exc}"
 
     results = [f"{idx+1}. {_market_markdown(row)}" for idx, row in enumerate(rows)]
     return "\n\n".join(results)
