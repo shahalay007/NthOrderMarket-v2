@@ -1,12 +1,12 @@
 # NthOrder Market Intelligence
 
-An end-to-end toolkit for exploring prediction markets on **Polymarket** and **Kalshi**. The project keeps local SQLite replicas in sync with both exchanges, exposes an intelligent natural-language interface powered by Gemini, and offers an MCP bridge for IDE integrations.
+An end-to-end toolkit for exploring prediction markets on **Polymarket**. The project keeps a local SQLite replica in sync with the exchange, exposes an intelligent natural-language interface powered by Gemini, and offers an MCP bridge for IDE integrations.
 
 The core goals are:
 - maintain fresh, local copies of active markets (volumes, liquidity, metadata)
 - let users ask questions in plain English and get the best matching markets
 - pick the fastest strategy automatically (direct SQL for rankings, Gemini batch scoring for fuzzy searches)
-- support platform-specific or combined answers while always filtering to active markets
+- always filter to active markets
 
 ---
 
@@ -16,34 +16,29 @@ The core goals are:
 ┌──────────────┐   API pull    ┌──────────────┐
 │ update_market│ ─────────────▶│ polymarket.db│  (write replica)
 │ _data.py     │               └──────┬───────┘
-└──────┬───────┘                      │ sync via db_sync.py
-       │                              ▼
-       │                     ┌──────────────────┐
-       │                     │polymarket_read.db│  (read replica)
-       │                     └──────────────────┘
-       │                              ▲
-       │                              │ ORM session in Gemini bot
-       │                              │
-       │                      ┌───────┴─────────┐
-       │                      │Flask app + UI   │
-       │                      │(intelligent_app)│
-       ▼                      └───────┬─────────┘
-┌──────────────┐   API pull           │ REST `/api/chat`
-│ update_kalshi│ ─────────────────────┘
-│ _data.py     │   sqlite writes    ┌───────────┐
-└──────────────┘ ─────────────────▶ │ kalshi.db │
-                                     └───────────┘
+└──────────────┘                      │ sync via db_sync.py
+                                      ▼
+                             ┌──────────────────┐
+                             │polymarket_read.db│  (read replica)
+                             └──────────────────┘
+                                      ▲
+                                      │ ORM session in Gemini bot
+                                      │
+                              ┌───────┴─────────┐
+                              │Flask app + UI   │
+                              │(intelligent_app)│
+                              └─────────────────┘
+                                REST `/api/chat`
 ```
 
 ### Components
 
 | Path | Description |
 | ---- | ----------- |
-| `intelligent_app.py` | Flask server + UI endpoints. Calls the Gemini bot, merges Kalshi results, returns structured markets and reasoning. |
+| `intelligent_app.py` | Flask server + UI endpoints. Calls the Gemini bot and returns structured markets and reasoning. |
 | `intelligent_gemini_bot.py` | Decision engine. Analyses a query once, decides SQL/BATCH/COMPARISON, enforces active-only filters, and surfaces strategy info + structured events. |
 | `update_market_data.py` | High-throughput Polymarket fetcher (parallel threads, ~20s cadence). Writes to `polymarket.db` and enriches market metadata. |
 | `db_sync.py` | Background service that copies the write DB into `polymarket_read.db` whenever no reads are active. |
-| `update_kalshi_data.py` | Kalshi crawler. Walks the trade API pages ~20s, upserts markets into `kalshi.db`, marks inactive ones. |
 | `prediction-mcp-server/` | Optional MCP server packaging the same workflow for Claude Desktop, Cursor, etc. Includes ChatGPT + Gemini tooling. |
 
 ---
@@ -59,36 +54,25 @@ The core goals are:
    - Tracks read locks via `ReadTracker` context manager.
    - Copies `polymarket.db` ➟ `polymarket_read.db` when idle and verifies counts.
 
-3. **Kalshi ingestion** – `python update_kalshi_data.py`
-   - Pages through `https://api.elections.kalshi.com/trade-api/v2/markets`.
-   - Stores all fields (vol, liquidity, bid/ask, timestamps) in `kalshi.db`.
-   - Marks inactive markets if they disappear from the feed.
-
-> Both scripts can run continuously in their own terminal sessions. The Flask app will keep using the latest replicas on disk.
+> Both scripts can run continuously in their own terminal sessions. The Flask app will keep using the latest replica on disk.
 
 ---
 
 ## Query Processing Flow
 
-1. **System prompt** – The bot is reminded to answer with real Polymarket _and/or_ Kalshi markets unless the question is generic.
+1. **System prompt** – The bot is reminded to answer with real Polymarket markets unless the question is generic.
 2. **Single analysis call** – `analyze_query_all_in_one()` asks Gemini to return:
    - intent + filters + requested limit
    - preferred strategy (`SQL`, `BATCH`, `COMPARISON`)
    - required columns / domain hints
-   - **platform filter** (`POLYMARKET`, `KALSHI`, `BOTH`)
 3. **Strategy selection**
-   - Simple ranking language (“top 10 … by volume”) forces SQL regardless.
+   - Simple ranking language ("top 10 … by volume") forces SQL regardless.
    - Batch/comparison paths may pull Perplexity context for deeper reasoning.
 4. **Execution**
    - **SQL**: sanitize query, enforce `is_active = 1`, append ordering, stream results.
    - **Batch**: slice active events, send to Gemini for relevance scoring, keep ≥70.
    - **Comparison**: execute multiple SQL aggregates, combine into markdown.
-5. **Platform filtering**
-   - Flask merges the Gemini response with Kalshi lookups if the filter includes Kalshi.
-   - `search_kalshi_markets` always enforces `is_active = 1` and `status IN ('open','active')` and links to `https://kalshi.com/markets/{ticker}`.
-6. **Structured output** – Each event record includes platform, title, volume, liquidity, domain/category, URL, and any reasoning from batch mode. This powers table sorting/filtering on the front end.
-
-The latest platform choice is exposed via `chatbot.get_platform_filter()` and included in JSON responses (`platform_filter` field).
+5. **Structured output** – Each event record includes title, volume, liquidity, domain/category, URL, and any reasoning from batch mode. This powers table sorting/filtering on the front end.
 
 ---
 
@@ -107,7 +91,6 @@ Create an `.env` file at the repo root or export variables manually:
 GEMINI_API_KEY=your_gemini_key
 PORT=5001          # optional, defaults to 5001
 DEBUG=False        # optional
-KALSHI_DB_PATH=kalshi.db
 PREDICTION_DB_PATH=polymarket_read.db
 ```
 
@@ -131,11 +114,7 @@ In separate terminals (recommended):
    ```bash
    python db_sync.py
    ```
-3. **Kalshi updater**
-   ```bash
-   python update_kalshi_data.py
-   ```
-4. **Flask app**
+3. **Flask app**
    ```bash
    python intelligent_app.py
    ```
@@ -157,17 +136,6 @@ You can stop any service with `Ctrl+C` or `kill <pid>`; restarting picks up from
   conn.close()
   PY
   ```
-- Kalshi counts:
-  ```bash
-  python - <<'PY'
-  import sqlite3
-  conn = sqlite3.connect('kalshi.db')
-  cur = conn.cursor()
-  cur.execute('SELECT COUNT(*) FROM kalshi_markets WHERE is_active = 1')
-  print(cur.fetchone()[0])
-  conn.close()
-  PY
-  ```
 
 ---
 
@@ -178,7 +146,7 @@ You can stop any service with `Ctrl+C` or `kill <pid>`; restarting picks up from
 | Endpoint | Method | Description |
 | -------- | ------ | ----------- |
 | `/` | GET | Main HTML interface. |
-| `/api/chat` | POST JSON `{"message": "…"}` | Runs Gemini pipeline and Kalshi lookup. Payload includes `response`, `events`, `platform_filter`, `thinking`, etc. |
+| `/api/chat` | POST JSON `{"message": "…"}` | Runs Gemini pipeline. Payload includes `response`, `events`, `thinking`, etc. |
 | `/api/filter-events` | POST | Client-side filtering helper. |
 | `/api/top-events` | GET | Top Polymarket events by volume. |
 | `/api/stats` | GET | Basic Polymarket DB stats. |
@@ -204,7 +172,7 @@ uvx prediction-mcp-server serve
 Notable tools:
 - `intelligent_market_analysis` – mirrors the Gemini pipeline.
 - `chatgpt_market_analysis` – OpenAI-backed reasoning with Polymarket context.
-- `list_*` / `search_*` – SQL utilities for both datasets.
+- `list_*` / `search_*` – SQL utilities for the Polymarket dataset.
 
 See `prediction-mcp-server/README.md` for the full command set.
 
@@ -212,10 +180,9 @@ See `prediction-mcp-server/README.md` for the full command set.
 
 ## Development Notes
 
-- **Platform filter**: stored on the bot object; defaults to `BOTH`. LLM prompts can explicitly request “Kalshi only” or “Polymarket only.” The Flask layer respects it when merging results.
-- **Active-only enforcement**: all Polymarket queries inject `is_active = 1`; Kalshi SQL adds both `is_active = 1` and `status IN ('open','active')`.
-- **Logging**: key decisions (strategy, keywords, Perplexity queries, platform filter) are written through the Flask in-memory logger and stdout.
-- **Extensibility ideas**: add Kalshi-specific semantic batching, expose strategy info in the UI, or stream progress updates via SSE/WebSockets.
+- **Active-only enforcement**: all Polymarket queries inject `is_active = 1`.
+- **Logging**: key decisions (strategy, keywords, Perplexity queries) are written through the Flask in-memory logger and stdout.
+- **Extensibility ideas**: add semantic batching enhancements, expose strategy info in the UI, or stream progress updates via SSE/WebSockets.
 
 ---
 
@@ -224,7 +191,6 @@ See `prediction-mcp-server/README.md` for the full command set.
 | Symptom | Fix |
 | ------- | --- |
 | Blank results | Ensure updaters are running and DBs exist (`ls -lh *.db`). |
-| Kalshi link 404 | Check ticker; links use `https://kalshi.com/markets/{ticker}`. |
 | Gemini errors | Verify `GEMINI_API_KEY` and network access. |
 | MCP tools missing | Re-run `uvx prediction-mcp-server init` and ensure env vars propagate. |
 
@@ -233,4 +199,3 @@ See `prediction-mcp-server/README.md` for the full command set.
 ## License
 
 No explicit license file is provided. Treat the codebase as proprietary unless a license is added.
-

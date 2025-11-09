@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 Intelligent Polymarket Chatbot - Flask Web Interface
-Uses dual strategy: SQL for data queries, Batch for semantic queries
 """
 
 import os
@@ -50,10 +49,6 @@ STOPWORDS = {
     "markets", "market", "prediction", "show", "list", "give"
 }
 
-def _kalshi_db_path():
-    """Resolve Kalshi database path."""
-    return Path(os.getenv('KALSHI_DB_PATH', 'kalshi.db')).expanduser()
-
 def _extract_keywords(text, limit=6):
     """Extract simple keywords for Kalshi SQL filtering."""
     tokens = re.findall(r"[a-z0-9']+", text.lower())
@@ -65,111 +60,6 @@ def _extract_keywords(text, limit=6):
         if len(keywords) >= limit:
             break
     return keywords
-
-def search_kalshi_markets(user_query, limit=10):
-    """Return Kalshi markets matching the query along with formatted markdown."""
-    db_path = _kalshi_db_path()
-    if not db_path.exists():
-        return [], ""
-
-    keywords = _extract_keywords(user_query)
-    params = []
-    filters = ["is_active = 1"]
-
-    if keywords:
-        keyword_clauses = []
-        for kw in keywords:
-            like = f"%{kw}%"
-            keyword_clauses.append("(LOWER(title) LIKE ? OR LOWER(subtitle) LIKE ? OR LOWER(category) LIKE ?)")
-            params.extend([like, like, like])
-        filters.append("(" + " OR ".join(keyword_clauses) + ")")
-
-    filters.append("status IN ('open', 'active')")
-
-    sql = f"""
-        SELECT ticker, title, category, volume, liquidity, yes_bid, yes_ask, close_time, status
-        FROM kalshi_markets
-        WHERE {' AND '.join(filters)}
-        ORDER BY COALESCE(volume, 0) DESC
-        LIMIT ?
-    """
-    params.append(limit)
-
-    try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute(sql, params)
-        rows = cursor.fetchall()
-        conn.close()
-    except sqlite3.Error as exc:
-        log_message('error', f'Kalshi query failed: {exc}')
-        return [], ""
-
-    if not rows and keywords:
-        # Fallback to top markets if keyword search empty
-        try:
-            conn = sqlite3.connect(db_path)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT ticker, title, category, volume, liquidity, yes_bid, yes_ask, close_time, status
-                FROM kalshi_markets
-                WHERE is_active = 1
-                  AND status IN ('open', 'active')
-                ORDER BY COALESCE(volume, 0) DESC
-                LIMIT ?
-                """,
-                (limit,)
-            )
-            rows = cursor.fetchall()
-            conn.close()
-        except sqlite3.Error as exc:
-            log_message('error', f'Kalshi fallback failed: {exc}')
-            return [], ""
-
-    if not rows:
-        return [], ""
-
-    structured = []
-    lines = []
-    for idx, row in enumerate(rows, 1):
-        data = dict(row)
-        title = data.get('title') or 'Unknown Market'
-        raw_volume = data.get('volume') or 0
-        raw_liquidity = data.get('liquidity') or 0
-        volume = float(raw_volume) / 100 if raw_volume else 0.0
-        liquidity = float(raw_liquidity) / 100 if raw_liquidity else 0.0
-        yes_bid = data.get('yes_bid')
-        yes_ask = data.get('yes_ask')
-        price_bits = []
-        if yes_bid is not None:
-            price_bits.append(f"Yes bid: {yes_bid}¢")
-        if yes_ask is not None:
-            price_bits.append(f"Yes ask: {yes_ask}¢")
-        prices = " | ".join(price_bits) if price_bits else "Prices unavailable"
-        url = f"https://kalshi.com/market/{data.get('ticker')}" if data.get('ticker') else None
-
-        line = f"{idx}. **{title}**\n   - Category: {data.get('category') or 'N/A'}\n   - Volume: ${volume:,.2f}\n   - Liquidity: ${liquidity:,.2f}\n   - {prices}"
-        if url:
-            line += f"\n   - 🔗 Link: {url}"
-        lines.append(line)
-
-        structured.append({
-            'platform': 'kalshi',
-            'title': title,
-            'volume': volume,
-            'liquidity': liquidity,
-            'domain': data.get('category'),
-            'url': url,
-            'ticker': data.get('ticker'),
-            'yes_bid': yes_bid,
-            'yes_ask': yes_ask,
-            'status': data.get('status'),
-        })
-
-    return structured, "\n\n".join(lines)
 
 @app.route('/')
 def index():
@@ -206,7 +96,6 @@ def chat():
 
         platform_filter = chatbot.get_platform_filter().upper()
         include_polymarket = platform_filter in ('POLYMARKET', 'BOTH')
-        include_kalshi = platform_filter in ('KALSHI', 'BOTH')
 
         polymarket_events = []
         if include_polymarket and events_data:
@@ -215,17 +104,9 @@ def chat():
                 event_copy.setdefault('platform', 'polymarket')
                 polymarket_events.append(event_copy)
 
-        kalshi_events = []
-        kalshi_text = ""
-        if include_kalshi:
-            kalshi_events, kalshi_text = search_kalshi_markets(user_message)
-
         final_response = response if include_polymarket else ""
-        if include_kalshi and kalshi_text:
-            section = f"### Kalshi Markets\n\n{kalshi_text}"
-            final_response = f"{final_response}\n\n{section}".strip()
 
-        combined_events = polymarket_events + kalshi_events
+        combined_events = polymarket_events
         if not combined_events and not final_response:
             final_response = "No markets found for the requested filters."
 

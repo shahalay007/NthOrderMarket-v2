@@ -55,12 +55,12 @@ from query_logger import QueryLogger
 
 logger = QueryLogger()
 
-logger.start_query("highest liquidity kalshi markets")
+logger.start_query("highest liquidity polymarket markets")
 logger.log_strategy("FAST SQL", "Ranking query with metric detected")
 
 logger.log_sql(
-    "SELECT * FROM kalshi_markets WHERE is_active=1 ORDER BY liquidity DESC LIMIT 20",
-    "Kalshi"
+    "SELECT * FROM events WHERE is_active=1 ORDER BY liquidity DESC LIMIT 20",
+    "Polymarket"
 )
 
 logger.log_results(20, 0.45)
@@ -70,7 +70,7 @@ logger.end_query()
 **Output in `query_execution.log`:**
 ```
 ================================================================================
-QUERY: highest liquidity kalshi markets
+QUERY: highest liquidity polymarket markets
 TIMESTAMP: 2025-11-01 14:09:02
 ================================================================================
 
@@ -78,8 +78,8 @@ STRATEGY CHOSEN: FAST SQL
 REASON: Ranking query with metric detected
 
 --- SQL QUERY ---
-Platform: Kalshi
-Query: SELECT * FROM kalshi_markets WHERE is_active=1 ORDER BY liquidity DESC LIMIT 20
+Platform: Polymarket
+Query: SELECT * FROM events WHERE is_active=1 ORDER BY liquidity DESC LIMIT 20
 
 --- RESULTS ---
 Markets Found: 20

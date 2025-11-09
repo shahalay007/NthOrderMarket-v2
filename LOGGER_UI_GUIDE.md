@@ -62,7 +62,7 @@ Each query entry shows:
 - Explanation of why this strategy was chosen
 
 #### SQL Section (for SQL queries)
-- **Platform Tag** - Which platform (Polymarket/Kalshi)
+- **Platform Tag** - Polymarket platform
 - **SQL Query** - The actual SQL executed (syntax highlighted)
 
 #### AI Section (for AI queries)

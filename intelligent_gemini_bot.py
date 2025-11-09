@@ -67,7 +67,7 @@ class IntelligentGeminiBot:
         self._cached_domain_filter = None
         self._cached_required_columns = None
         self._last_thinking_trace = None
-        self._platform_filter = 'BOTH'
+        self._platform_filter = 'POLYMARKET'
 
     def _log(self, level, message):
         """Log a message via callback if available."""
@@ -546,33 +546,6 @@ IMPORTANT: These are the ONLY columns available in the database. DO NOT use any 
 
 CRITICAL: Do NOT include price-related columns like 'outcome_prices', 'last_trade_price', 'best_bid', 'best_ask', or any other columns not listed above. They are excluded from queries.
 
-KALSHI DATASET OVERVIEW:
-Table: kalshi_markets
-- ticker (TEXT, PRIMARY KEY)
-- event_ticker (TEXT)
-- title (TEXT)
-- subtitle (TEXT)
-- market_type (TEXT)
-- category (TEXT)
-- status (TEXT)
-- open_time (DATETIME)
-- close_time (DATETIME)
-- expiration_time (DATETIME)
-- settlement_time (DATETIME)
-- volume (INTEGER)
-- liquidity (INTEGER)
-- open_interest (INTEGER)
-- yes_bid (INTEGER)
-- yes_ask (INTEGER)
-- no_bid (INTEGER)
-- no_ask (INTEGER)
-- last_price (INTEGER)
-- result (TEXT)
-- is_active (BOOLEAN)
-- created_at (DATETIME)
-- updated_at (DATETIME)
-- last_synced (DATETIME)
-
 Common query patterns:
 - Top volume: SELECT id, title, slug, domain, section, subsection, volume, liquidity FROM events WHERE is_active=1 ORDER BY volume DESC
 - Recent: SELECT id, title, slug, domain, section, subsection, volume, liquidity FROM events WHERE is_active=1 ORDER BY updated_at DESC
@@ -647,7 +620,7 @@ Provide the following in your response:
    - Always include 'volume' and 'liquidity' for financial metrics
    - Do NOT include any price-related columns (outcome_prices, last_trade_price, best_bid, best_ask)
 
-7. PLATFORM_FILTER (specify whether the answer should include Polymarket, Kalshi, or BOTH. If user does not specify, default to BOTH.)
+7. PLATFORM_FILTER (currently only POLYMARKET is supported)
 
 Response format:
 INTENT: <intent description>
@@ -665,7 +638,7 @@ COMPARISON_QUERIES: <if COMPARISON, provide category names and SQL queries in fo
 
 DOMAIN_FILTER: <comma-separated domain numbers (1-11) or ALL>
 
-PLATFORM_FILTER: <POLYMARKET | KALSHI | BOTH>
+PLATFORM_FILTER: POLYMARKET
 
 REQUIRED_COLUMNS: <comma-separated, minimal set>
 
@@ -683,7 +656,7 @@ Your response:"""
             required_columns = ['id', 'title', 'slug', 'domain', 'section', 'subsection', 'volume', 'liquidity']
             domain_filter = None
             user_limit = None
-            platform_filter = 'BOTH'
+            platform_filter = 'POLYMARKET'
 
             for line in result.split('\n'):
                 line = line.strip()
@@ -716,10 +689,10 @@ Your response:"""
                         domain_filter = [int(d.strip()) for d in domain_str.split(',') if d.strip().isdigit()]
                 elif line.startswith('PLATFORM_FILTER:'):
                     platform_str = line.replace('PLATFORM_FILTER:', '').strip().upper()
-                    if platform_str in {'POLYMARKET', 'KALSHI', 'BOTH'}:
+                    if platform_str == 'POLYMARKET':
                         platform_filter = platform_str
                     else:
-                        platform_filter = 'BOTH'
+                        platform_filter = 'POLYMARKET'
                 elif line.startswith('REQUIRED_COLUMNS:'):
                     cols_str = line.replace('REQUIRED_COLUMNS:', '').strip()
                     required_columns = [c.strip() for c in cols_str.split(',') if c.strip()]
@@ -1570,16 +1543,15 @@ Response:"""
             self._last_thinking_trace = None
 
             # Pre-step: Add system context to query
-            contextualized_query = f"""SYSTEM CONTEXT: You are a prediction markets chatbot with access to Polymarket (events table) and Kalshi (kalshi_markets table).
+            contextualized_query = f"""SYSTEM CONTEXT: You are a prediction markets chatbot with access to Polymarket (events table).
 
-CRITICAL INSTRUCTION: Unless the user explicitly asks a generic question (e.g., "what is polymarket?", "how do prediction markets work?"), you MUST query the databases and return actual markets/events from Polymarket and/or Kalshi.
+CRITICAL INSTRUCTION: Unless the user explicitly asks a generic question (e.g., "what is polymarket?", "how do prediction markets work?"), you MUST query the database and return actual markets/events from Polymarket.
 
 Examples:
-- "interest rates" → Find markets about interest rates in the databases
-- "trump" → Find markets about Trump in the databases
-- "AI markets" → Find markets about AI in the databases
-- "kalshi political markets" → Prefer Kalshi political markets
-- "polymarket sports" → Prefer Polymarket sports markets
+- "interest rates" → Find markets about interest rates in the database
+- "trump" → Find markets about Trump in the database
+- "AI markets" → Find markets about AI in the database
+- "polymarket sports" → Find Polymarket sports markets
 - "what is polymarket?" → Generic question, can answer without database
 
 USER QUERY: {user_query}"""
@@ -1607,11 +1579,6 @@ USER QUERY: {user_query}"""
                 strategy_normalized = 'sql'
                 strategy = 'sql'
                 self._log("info", "🎯 Simple metric query detected → forcing SQL strategy")
-
-            if self._platform_filter == 'KALSHI':
-                self._log("info", "🎯 Platform filter: Kalshi only → skipping Polymarket pipeline")
-                self._record_structured_results([])
-                return "Kalshi markets requested. Fetching Kalshi results."
 
             needs_reasoning = strategy_normalized in {'batch', 'comparison'}
 

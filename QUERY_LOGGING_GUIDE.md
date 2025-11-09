@@ -2,7 +2,7 @@
 
 ## Overview
 
-The intelligent multi-platform bot now includes a comprehensive query logging system that tracks **every detail** of query execution:
+The intelligent Polymarket bot now includes a comprehensive query logging system that tracks **every detail** of query execution:
 
 - ✅ Query text and timestamp
 - ✅ Strategy chosen (SQL vs AI)
@@ -56,10 +56,9 @@ You are a prediction market evaluator.
 USER QUERY: markets affected by Federal Reserve rate changes
 USER INTENT: Find markets related to: markets affected by Federal Reserve rate changes
 
-BATCH 1 of markets to evaluate (from Polymarket and Kalshi):
+BATCH 1 of markets to evaluate (from Polymarket):
 [
  {
-  "platform": "polymarket",
   "id": "12345",
   "title": "Will the Fed raise rates in March 2025?",
   "category": "Politics"
@@ -75,7 +74,7 @@ YOUR TASK:
    ...
 
 Output (287 chars):
-polymarket:12345:95:Directly about Fed rate decision|polymarket:67890:88:Treasury yields tied to Fed policy|kalshi:FEDRATE-24:92:Federal Reserve rate market...
+12345:95:Directly about Fed rate decision|67890:88:Treasury yields tied to Fed policy|23456:92:Federal Reserve rate market...
 
 --- AI PROMPT: Batch 2 Multi-Platform Matching ---
 Input (1621 chars):
@@ -104,7 +103,7 @@ Time Elapsed: 18.45s
 ### For SQL Queries:
 
 3. **SQL Execution**
-   - Platform (Polymarket, Kalshi, or both)
+   - Platform (Polymarket)
    - Exact SQL query executed
    - Parameters (if any)
 
@@ -180,7 +179,7 @@ The log file:
 
 ## Example Queries and Expected Logs
 
-### Query 1: "top 5 kalshi markets by volume"
+### Query 1: "top 5 markets by volume"
 
 **Expected Strategy:** FAST SQL
 
@@ -190,8 +189,8 @@ STRATEGY CHOSEN: FAST SQL
 REASON: Simple ranking query detected (has ranking keyword + metric)
 
 --- SQL QUERY ---
-Platform: Kalshi
-Query: SELECT * FROM kalshi_markets WHERE is_active=1 ORDER BY volume DESC LIMIT 5
+Platform: Polymarket
+Query: SELECT * FROM events WHERE is_active=1 ORDER BY volume DESC LIMIT 5
 
 --- RESULTS ---
 Markets Found: 5
@@ -212,8 +211,8 @@ Platform: Polymarket
 Query: SELECT * FROM events WHERE is_active=1 ORDER BY liquidity DESC LIMIT 20
 
 --- SQL QUERY ---
-Platform: Kalshi
-Query: SELECT * FROM kalshi_markets WHERE is_active=1 ORDER BY liquidity DESC LIMIT 20
+Platform: Polymarket  
+Query: SELECT * FROM events WHERE is_active=1 ORDER BY liquidity DESC LIMIT 20
 
 --- RESULTS ---
 Markets Found: 20
@@ -237,7 +236,7 @@ USER QUERY: markets that benefit from oil price increases
 ...
 
 Output (421 chars):
-polymarket:123:92:Energy sector stocks directly tied to oil|kalshi:OIL-24:95:Oil price futures market|polymarket:456:85:Transportation costs affected...
+polymarket:123:92:Energy sector stocks directly tied to oil|polymarket:456:85:Transportation costs affected...
 
 --- AI PROMPT: Batch 2 Multi-Platform Matching ---
 ...
@@ -275,7 +274,7 @@ LIMIT [N]
 **Metric** is one of:
 - `volume` (default)
 - `liquidity`
-- `open_interest` (Kalshi only)
+- `open_interest`
 
 ### AI Prompt Structure
 

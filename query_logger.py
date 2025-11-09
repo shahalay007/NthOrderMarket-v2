@@ -64,7 +64,7 @@ class QueryLogger:
 
         Args:
             query: The SQL query string
-            platform: Platform name (e.g., "Polymarket", "Kalshi")
+            platform: Platform name (e.g., "Polymarket")
             params: Optional query parameters
         """
         self.log(f"\n--- SQL QUERY ---")
@@ -154,7 +154,7 @@ if __name__ == "__main__":
 USER QUERY: markets affected by Federal Reserve rate changes
 USER INTENT: Find markets related to: markets affected by Federal Reserve rate changes
 
-BATCH 1 of markets to evaluate (from Polymarket and Kalshi):
+BATCH 1 of markets to evaluate (from Polymarket):
 [
   {
     "platform": "polymarket",
